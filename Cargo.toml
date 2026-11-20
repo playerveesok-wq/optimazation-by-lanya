@@ -1,6 +1,6 @@
 [package]
 name = "optima"
-version = "0.3.0"
+version = "0.5.0"
 edition = "2021"
 
 [dependencies]
@@ -9,14 +9,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sysinfo = "0.32"
 dirs = "5"
-serenity = "0.12"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-machine-uid = "0.5"
 dialoguer = "0.11"
 colored = "2.1"
 regex = "1"
-log = "0.4"
-simplelog = "0.12"
+crossterm = "0.27"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
