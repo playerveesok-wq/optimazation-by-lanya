@@ -1,0 +1,33 @@
+[package]
+name = "optima"
+version = "0.3.0"
+edition = "2021"
+
+[dependencies]
+ureq = { version = "2", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sysinfo = "0.32"
+dirs = "5"
+serenity = "0.12"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+machine-uid = "0.5"
+dialoguer = "0.11"
+colored = "2.1"
+regex = "1"
+log = "0.4"
+simplelog = "0.12"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+windows = { version = "0.58", features = [
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+    "Win32_Foundation",
+] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
