@@ -1,130 +1,267 @@
 use colored::*;
 use dialoguer::{theme::ColorfulTheme, Select};
-use log::{info, error};
 use serde::Serialize;
-use serenity::async_trait;
-use serenity::model::channel::Message;
-use serenity::prelude::*;
-use simplelog::*;
-use std::fs::{self, File};
+use std::fs;
 use std::path::PathBuf;
 use sysinfo::System;
+use crossterm::event::{poll, read, Event, KeyCode};
+use std::time::Duration;
 
-// ================= ЗАПОЛНИ ЭТО =================
-const WEBHOOK: &str = "https://discord.com/api/webhooks/1573428258861482205/RYrEW_HDXRU2HX-uORpMnUIt67wSmdpEm9yNBE0Wfo003Gv2WT_6lvdr60giD6ZETYQr"; // Твой вебхук (уже вставлен)
-const TOKEN: &str = "ТВОЙ_ТОКЕН_БОТА"; // FILL: токен бота
-const OWNER_ID: u64 = 123456789012345678; // FILL: твой Discord User ID
-const CHANNEL_ID: u64 = 123456789012345678; // FILL: ID канала
-// ===============================================
-
-struct Handler { expected_hwid: String }
-
-#[async_trait]
-impl EventHandler for Handler {
-    async fn message(&self, ctx: Context, msg: Message) {
-        if msg.author.id.get() != OWNER_ID { return; }
-        if msg.content.starts_with("!auth ") {
-            let code = msg.content.replace("!auth ", "").trim().to_string();
-            if code == self.expected_hwid {
-                let _ = msg.channel_id.say(&ctx.http, "✅ Доступ разрешен. Запускаю оптимизацию...").await;
-                let _ = fs::write("auth.txt", &self.expected_hwid);
-                ctx.shard.shutdown_clean();
-            }
-        }
-    }
-}
-
-async fn authorize(hwid: &str) {
-    let handler = Handler { expected_hwid: hwid.to_string() };
-    let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
-    
-    if TOKEN.contains("ТВОЙ_ТОКЕН") {
-        error!("Вставь токен бота, ID и канал в код!");
-        println!("{}", "ОШИБКА: Заполни TOKEN, OWNER_ID и CHANNEL_ID в коде!".red().bold());
-        std::process::exit(1);
-    }
-
-    let mut client = Client::builder(TOKEN, intents).event_handler(handler).await.expect("Bot err");
-    let channel = serenity::model::id::ChannelId::new(CHANNEL_ID);
-    
-    // Тут была ошибка, теперь исправлено на &client.http
-    let _ = channel.say(&client.http, format!("🔒 Требуется авторизация.\nВаш HWID: `{}`\nНапишите `!auth {}`", hwid, hwid)).await;
-    
-    let _ = client.start().await;
-}
+// Твой вебхук
+const WEBHOOK: &str = "https://discord.com/api/webhooks/1573428258861482205/RYrEW_HDXRU2HX-uORpMnUIt67wSmdpEm9yNBE0Wfo003Gv2WT_6lvdr60giD6ZETYQr";
 
 #[derive(Serialize)]
 struct Payload<'a> { content: &'a str, username: &'a str }
 
 fn send_log(text: &str) {
-    info!("{}", text);
     let body = serde_json::to_string(&Payload { content: text, username: "optima" }).unwrap();
     let _ = ureq::post(WEBHOOK).set("Content-Type", "application/json").send_string(&body);
 }
 
-fn init_logging() {
-    let log_file = File::create("optima.log").unwrap();
-    CombinedLogger::init(vec![
-        WriteLogger::new(LevelFilter::Info, Config::default(), log_file),
-    ]).unwrap();
-}
-
 fn clear_screen() { print!("{esc}[2J{esc}[1;1H", esc = 27 as char); }
-
-fn main_loop() {
-    let mut sys = System::new_all();
-    sys.refresh_all();
-    let total_ram = sys.total_memory() / 1024 / 1024;
-    let cpu = sys.cpus()[0].brand();
-
-    loop {
-        clear_screen();
-        println!("{}", "=========================================".bright_cyan());
-        println!("{}", "       OPTIMA - SYSTEM OPTIMIZER         ".bright_cyan().bold());
-        println!("{}", "=========================================".bright_cyan());
-        println!(" CPU: {} | RAM: {} MB", cpu, total_ram);
-        println!("{}", "-----------------------------------------".dimmed());
-
-        if total_ram < 8192 {
-            println!("{}", "[!] У вас мало ОЗУ (<8GB). Рекомендуется закрыть браузер перед играми.".yellow());
-        } else {
-            println!("{}", "[+] Железо в норме. Можно применять тяжелые твики.".green());
-        }
-        println!("{}", "-----------------------------------------".dimmed());
-
-        let items = vec![
-            "1. Очистка временных файлов (Temp)",
-            "2. Оптимизация оперативной памяти (RAM)",
-            "3. Твики Windows (Мышь, Телеметрия, DVR)",
-            "4. Твики игр (Fortnite, CS2, Roblox)",
-            "5. Отправить ручной лог в Discord",
-            "0. Выход"
-        ];
-
-        let selection = Select::with_theme(&ColorfulTheme::default())
-            .with_prompt("Выберите действие (стрелки + Enter)")
-            .items(&items)
-            .default(0)
-            .interact()
-            .unwrap();
-
-        match selection {
-            0 => clean_temp(),
-            1 => trim_ram(),
-            2 => windows_tweaks(),
-            3 => game_tweaks(),
-            4 => { send_log("**optima:** Ручной отчет отправлен"); println!("{}", "Отчет отправлен в Discord!".green()); wait_enter(); },
-            5 => break,
-            _ => unreachable!(),
-        }
-    }
-}
 
 fn wait_enter() {
     println!("\nНажмите Enter чтобы продолжить...");
     let mut _p = String::new();
     let _ = std::io::stdin().read_line(&mut _p);
 }
+
+// ================= ПУЛЬС ПК =================
+fn pc_pulse() {
+    let mut sys = System::new_all();
+    let mut networks = sysinfo::Networks::new_with_refreshed_list();
+    
+    loop {
+        sys.refresh_all();
+        networks.refresh();
+        
+        clear_screen();
+        println!("{}", "=========================================".bright_magenta());
+        println!("{}", "             PC PULSE (LIVE)             ".bright_magenta().bold());
+        println!("{}", "   Нажмите любую клавишу для выхода...   ".dimmed());
+        println!("{}", "=========================================".bright_magenta());
+        
+        let cpu_usage = sys.global_cpu_info().cpu_usage();
+        let ram_used = sys.used_memory() / 1024 / 1024;
+        let ram_total = sys.total_memory() / 1024 / 1024;
+        let ram_percent = (ram_used as f64 / ram_total as f64) * 100.0;
+
+        println!(" CPU Load: {:.1}%", cpu_usage);
+        println!(" RAM:      {} MB / {} MB ({:.1}%)", ram_used, ram_total, ram_percent);
+        
+        // Сеть (суммарно за сессию)
+        let mut rx = 0;
+        let mut tx = 0;
+        for (_name, data) in &networks {
+            rx += data.total_received();
+            tx += data.total_transmitted();
+        }
+        println!(" Net RX:   {:.2} MB", rx as f64 / 1024.0 / 1024.0);
+        println!(" Net TX:   {:.2} MB", tx as f64 / 1024.0 / 1024.0);
+
+        println!("{}", "-----------------------------------------".dimmed());
+        println!("Топ процессов по ОЗУ:");
+        
+        let mut procs: Vec<_> = sys.processes().iter().collect();
+        procs.sort_by(|a, b| b.1.memory().cmp(&a.1.memory()));
+        for (pid, p) in procs.into_iter().take(5) {
+            println!(" {:<25} {:>6} MB", p.name().to_string_lossy(), p.memory() / 1024 / 1024);
+        }
+
+        // Ждем 1 секунду или нажатия клавиши
+        if poll(Duration::from_millis(1000)).unwrap_or(false) {
+            if let Ok(Event::Key(key)) = read() {
+                if key.kind == crossterm::event::KeyEventKind::Press {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+// ================= ТВИКИ =================
+
+fn windows_tweaks_menu() {
+    loop {
+        clear_screen();
+        println!("{}", "--- ТВИКИ WINDOWS ---".bright_cyan());
+        let items = vec![
+            "1. Базовые (Мышь, DVR, GameBar)",
+            "2. Сетевые (Nagle, Throttling, TCP)",
+            "3. Хардкор (Телеметрия, Приоритет CPU, Службы)",
+            "0. Назад"
+        ];
+
+        let choice = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt("Выберите категорию")
+            .items(&items)
+            .default(0)
+            .interact()
+            .unwrap();
+
+        match choice {
+            0 => tweaks_basic(),
+            1 => tweaks_network(),
+            2 => tweaks_hardcore(),
+            3 => break,
+            _ => unreachable!(),
+        }
+    }
+}
+
+fn tweaks_basic() {
+    clear_screen();
+    println!("{}", "--- БАЗОВЫЕ ТВИКИ ---".bright_cyan());
+    #[cfg(windows)]
+    {
+        use winreg::enums::*;
+        use winreg::RegKey;
+        
+        // Мышь
+        if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags("Control Panel\\Mouse", KEY_WRITE) {
+            let _ = hkcu.set_value("MouseSpeed", &"0");
+            let _ = hkcu.set_value("MouseThreshold1", &"0");
+            let _ = hkcu.set_value("MouseThreshold2", &"0");
+            println!("{}", "[+] Ускорение мыши отключено.".green());
+        }
+        
+        // Game DVR
+        if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags("System\\GameConfigStore", KEY_WRITE) {
+            let _ = hkcu.set_value("GameDVR_Enabled", &0u32);
+            let _ = hkcu.set_value("GameDVR_FSEBehaviorMode", &2u32); // Force Fullscreen
+            println!("{}", "[+] Game DVR и оптимизации выключены.".green());
+        }
+        send_log("⚙️ **optima:** Применены Базовые твики");
+    }
+    wait_enter();
+}
+
+fn tweaks_network() {
+    clear_screen();
+    println!("{}", "--- СЕТЕВЫЕ ТВИКИ ---".bright_cyan());
+    #[cfg(windows)]
+    {
+        use winreg::enums::*;
+        use winreg::RegKey;
+        
+        // Отключение Nagle (пинг в играх)
+        if let Ok(hklm) = RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey_with_flags("SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces", KEY_ALL_ACCESS) {
+            for subkey in hklm.enum_keys().flatten() {
+                if let Ok(iface) = hklm.open_subkey_with_flags(&subkey, KEY_WRITE) {
+                    let _ = iface.set_value("TcpAckFrequency", &1u32);
+                    let _ = iface.set_value("TCPNoDelay", &1u32);
+                    let _ = iface.set_value("TcpDelAckTicks", &0u32);
+                }
+            }
+            println!("{}", "[+] Nagle's Algorithm отключен (снижение пинга).".green());
+        }
+
+        // Network Throttling
+        if let Ok(hklm) = RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey_with_flags("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile", KEY_WRITE) {
+            let _ = hklm.set_value("NetworkThrottlingIndex", &0xffffffffu32);
+            let _ = hklm.set_value("SystemResponsiveness", &10u32);
+            println!("{}", "[+] Network Throttling отключен.".green());
+        }
+        send_log("🌐 **optima:** Применены Сетевые твики");
+    }
+    wait_enter();
+}
+
+fn tweaks_hardcore() {
+    clear_screen();
+    println!("{}", "--- ХАРДКОРНЫЕ ТВИКИ ---".bright_cyan());
+    println!("{}", "[!] Требуются права Администратора!".yellow());
+    #[cfg(windows)]
+    {
+        use winreg::enums::*;
+        use winreg::RegKey;
+        
+        // Отключение Телеметрии
+        if let Ok(hklm) = RegKey::predef(HKEY_LOCAL_MACHINE).create_subkey_with_flags("SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection", KEY_WRITE) {
+            let _ = hklm.0.set_value("AllowTelemetry", &0u32);
+            println!("{}", "[+] Телеметрия отключена.".green());
+        } else {
+            println!("{}", "[-] Нет прав для отключения телеметрии (Запусти от Админа).".red());
+        }
+
+        // Приоритет CPU для игр (Win32PrioritySeparation)
+        if let Ok(hklm) = RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey_with_flags("SYSTEM\\CurrentControlSet\\Control\\PriorityControl", KEY_WRITE) {
+            let _ = hklm.set_value("Win32PrioritySeparation", &38u32); // 38 = 26 hex (Short, Fixed, High)
+            println!("{}", "[+] Приоритет CPU настроен под игры.".green());
+        }
+
+        // Отключение Xbox Game Bar
+        if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).create_subkey_with_flags("Software\\Microsoft\\GameBar", KEY_WRITE) {
+            let _ = hkcu.0.set_value("UseNexusForGameBarEnabled", &0u32);
+            println!("{}", "[+] Xbox Game Bar отключен.".green());
+        }
+
+        send_log("🔥 **optima:** Применены Хардкорные твики");
+    }
+    wait_enter();
+}
+
+// ================= ИГРЫ =================
+
+fn game_tweaks() {
+    clear_screen();
+    println!("{}", "--- ТВИКИ ИГР ---".bright_cyan());
+    
+    let games = vec!["Fortnite", "CS2", "Roblox", "Назад"];
+    let choice = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("Выберите игру")
+        .items(&games)
+        .default(0)
+        .interact()
+        .unwrap();
+
+    if choice == 3 { return; }
+
+    if choice == 0 {
+        let mut path = dirs::data_local_dir().unwrap();
+        path.push("FortniteGame\\Saved\\Config\\WindowsClient\\GameUserSettings.ini");
+        if path.exists() {
+            let mut content = fs::read_to_string(&path).unwrap_or_default();
+            if content.contains("FrameRateLimit") {
+                content = content.replace("FrameRateLimit=60.000000", "FrameRateLimit=165.000000");
+                content = content.replace("bUseVSync=True", "bUseVSync=False");
+                let _ = fs::write(&path, content);
+                println!("{}", "[+] Fortnite: V-Sync выкл, FPS лимит поднят.".green());
+                send_log("🎮 **optima:** Применены твики Fortnite");
+            } else {
+                println!("{}", "[-] Не нашел нужных строк в конфиге Fortnite.".red());
+            }
+        } else {
+            println!("{}", "[-] Fortnite не установлен.".red());
+        }
+    }
+
+    if choice == 1 {
+        println!("{}", "[!] Для CS2 параметры запуска в Steam:".yellow());
+        println!("-novid -high -threads [кол-во ядер] +fps_max 0");
+        send_log("🎮 **optima:** Выданы рекомендации для CS2");
+    }
+
+    if choice == 2 {
+        let mut path = dirs::data_local_dir().unwrap();
+        path.push("Roblox\\GlobalBasicSettings_13.xml");
+        if path.exists() {
+            let mut content = fs::read_to_string(&path).unwrap_or_default();
+            if content.contains("<int name=\"FramerateCap\">") {
+                let re = regex::Regex::new(r#"<int name="FramerateCap">\d+</int>"#).unwrap();
+                content = re.replace(&content, "<int name=\"FramerateCap\">240</int>").to_string();
+                let _ = fs::write(&path, content);
+                println!("{}", "[+] Roblox: FPS кэп поднят до 240.".green());
+                send_log("🎮 **optima:** Применены твики Roblox");
+            }
+        } else {
+            println!("{}", "[-] Roblox не найден.".red());
+        }
+    }
+    wait_enter();
+}
+
+// ================= ОЧИСТКА =================
 
 fn clean_temp() {
     clear_screen();
@@ -178,104 +315,55 @@ fn trim_ram() {
     wait_enter();
 }
 
-fn windows_tweaks() {
-    #[cfg(windows)]
-    {
-        use winreg::enums::*;
-        use winreg::RegKey;
+// ================= MAIN =================
+
+fn main() {
+    let mut sys = System::new_all();
+    sys.refresh_all();
+    let total_ram = sys.total_memory() / 1024 / 1024;
+    let cpu = sys.cpus()[0].brand();
+
+    loop {
         clear_screen();
-        println!("{}", "--- ТВИКИ WINDOWS ---".bright_cyan());
-        println!("Применяю...");
-        
-        if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags("Control Panel\\Mouse", KEY_WRITE) {
-            let _ = hkcu.set_value("MouseSpeed", &"0");
-            let _ = hkcu.set_value("MouseThreshold1", &"0");
-            let _ = hkcu.set_value("MouseThreshold2", &"0");
-            println!("{}", "[+] Ускорение мыши отключено.".green());
-        }
+        println!("{}", "=========================================".bright_cyan());
+        println!("{}", "       OPTIMA - SYSTEM OPTIMIZER         ".bright_cyan().bold());
+        println!("{}", "=========================================".bright_cyan());
+        println!(" CPU: {} | RAM: {} MB", cpu, total_ram);
+        println!("{}", "-----------------------------------------".dimmed());
 
-        if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags("System\\GameConfigStore", KEY_WRITE) {
-            let _ = hkcu.set_value("GameDVR_Enabled", &0u32);
-            println!("{}", "[+] Game DVR выключен.".green());
-        }
-
-        send_log("⚙️ **optima:** Применены твики Windows (Мышь, DVR)");
-        println!("\n{}", "Готово!".green().bold());
-    }
-    wait_enter();
-}
-
-fn game_tweaks() {
-    clear_screen();
-    println!("{}", "--- ТВИКИ ИГР ---".bright_cyan());
-    
-    let games = vec!["Fortnite", "CS2", "Roblox", "Назад"];
-    let choice = Select::with_theme(&ColorfulTheme::default())
-        .with_prompt("Выберите игру")
-        .items(&games)
-        .default(0)
-        .interact()
-        .unwrap();
-
-    if choice == 3 { return; }
-
-    if choice == 0 {
-        let mut path = dirs::data_local_dir().unwrap();
-        path.push("FortniteGame\\Saved\\Config\\WindowsClient\\GameUserSettings.ini");
-        if path.exists() {
-            let mut content = fs::read_to_string(&path).unwrap_or_default();
-            if content.contains("FrameRateLimit") {
-                content = content.replace("FrameRateLimit=60.000000", "FrameRateLimit=165.000000");
-                content = content.replace("bUseVSync=True", "bUseVSync=False");
-                let _ = fs::write(&path, content);
-                println!("{}", "[+] Fortnite: V-Sync выкл, FPS лимит поднят.".green());
-                send_log("🎮 **optima:** Применены твики Fortnite");
-            } else {
-                println!("{}", "[-] Не нашел нужных строк в конфиге Fortnite.".red());
-            }
+        if total_ram < 8192 {
+            println!("{}", "[!] У вас мало ОЗУ (<8GB). Рекомендуется закрыть браузер перед играми.".yellow());
         } else {
-            println!("{}", "[-] Fortnite не установлен или путь не найден.".red());
+            println!("{}", "[+] Железо в норме. Можно применять тяжелые твики.".green());
+        }
+        println!("{}", "-----------------------------------------".dimmed());
+
+        let items = vec![
+            "1. Пульс ПК (Live Мониторинг)",
+            "2. Очистка временных файлов (Temp)",
+            "3. Оптимизация оперативной памяти (RAM)",
+            "4. Твики Windows (Базовые, Сеть, Хардкор)",
+            "5. Твики игр (Fortnite, CS2, Roblox)",
+            "6. Отправить ручной лог в Discord",
+            "0. Выход"
+        ];
+
+        let selection = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt("Выберите действие (стрелки + Enter)")
+            .items(&items)
+            .default(0)
+            .interact()
+            .unwrap();
+
+        match selection {
+            0 => pc_pulse(),
+            1 => clean_temp(),
+            2 => trim_ram(),
+            3 => windows_tweaks_menu(),
+            4 => game_tweaks(),
+            5 => { send_log("**optima:** Ручной отчет отправлен"); println!("{}", "Отчет отправлен в Discord!".green()); wait_enter(); },
+            6 => break,
+            _ => unreachable!(),
         }
     }
-
-    if choice == 1 {
-        println!("{}", "[!] Для CS2 лучше использовать параметры запуска в Steam:".yellow());
-        println!("-novid -high -threads [кол-во ядер] +fps_max 0");
-        send_log("🎮 **optima:** Выданы рекомендации для CS2");
-    }
-
-    if choice == 2 {
-        let mut path = dirs::data_local_dir().unwrap();
-        path.push("Roblox\\GlobalBasicSettings_13.xml");
-        if path.exists() {
-            let mut content = fs::read_to_string(&path).unwrap_or_default();
-            if content.contains("<int name=\"FramerateCap\">") {
-                let re = regex::Regex::new(r#"<int name="FramerateCap">\d+</int>"#).unwrap();
-                content = re.replace(&content, "<int name=\"FramerateCap\">240</int>").to_string();
-                let _ = fs::write(&path, content);
-                println!("{}", "[+] Roblox: FPS кэп поднят до 240.".green());
-                send_log("🎮 **optima:** Применены твики Roblox");
-            }
-        } else {
-            println!("{}", "[-] Roblox не найден.".red());
-        }
-    }
-    wait_enter();
-}
-
-#[tokio::main]
-async fn main() {
-    init_logging();
-    info!("Запуск optima...");
-
-    let hwid = machine_uid::get().unwrap_or_else(|_| "UNKNOWN".to_string());
-    let auth = fs::read_to_string("auth.txt").unwrap_or_default();
-    
-    if auth.trim() != hwid {
-        clear_screen();
-        println!("{}", "Требуется авторизация. Смотрите Discord.".yellow());
-        authorize(&hwid).await;
-    }
-
-    main_loop();
 }
