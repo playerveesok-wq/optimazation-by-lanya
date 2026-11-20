@@ -4,7 +4,7 @@ use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
 use sysinfo::System;
-use crossterm::event::{poll, read, Event, KeyCode};
+use crossterm::event::{poll, read, Event};
 use std::time::Duration;
 
 // Твой вебхук
@@ -41,7 +41,8 @@ fn pc_pulse() {
         println!("{}", "   Нажмите любую клавишу для выхода...   ".dimmed());
         println!("{}", "=========================================".bright_magenta());
         
-        let cpu_usage = sys.global_cpu_info().cpu_usage();
+        // Исправленная строчка под новую версию sysinfo
+        let cpu_usage = sys.global_cpu_usage();
         let ram_used = sys.used_memory() / 1024 / 1024;
         let ram_total = sys.total_memory() / 1024 / 1024;
         let ram_percent = (ram_used as f64 / ram_total as f64) * 100.0;
