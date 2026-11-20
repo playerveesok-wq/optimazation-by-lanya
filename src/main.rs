@@ -1,6 +1,6 @@
 use colored::*;
 use dialoguer::{theme::ColorfulTheme, Select};
-use log::{info, warn, error};
+use log::{info, error};
 use serde::Serialize;
 use serenity::async_trait;
 use serenity::model::channel::Message;
@@ -38,7 +38,6 @@ async fn authorize(hwid: &str) {
     let handler = Handler { expected_hwid: hwid.to_string() };
     let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
     
-    // Проверка, вставил ли юзер токен
     if TOKEN.contains("ТВОЙ_ТОКЕН") {
         error!("Вставь токен бота, ID и канал в код!");
         println!("{}", "ОШИБКА: Заполни TOKEN, OWNER_ID и CHANNEL_ID в коде!".red().bold());
@@ -47,7 +46,10 @@ async fn authorize(hwid: &str) {
 
     let mut client = Client::builder(TOKEN, intents).event_handler(handler).await.expect("Bot err");
     let channel = serenity::model::id::ChannelId::new(CHANNEL_ID);
-    let _ = channel.say(&client.cache_and_http.http, format!("🔒 Требуется авторизация.\nВаш HWID: `{}`\nНапишите `!auth {}`", hwid, hwid)).await;
+    
+    // Тут была ошибка, теперь исправлено на &client.http
+    let _ = channel.say(&client.http, format!("🔒 Требуется авторизация.\nВаш HWID: `{}`\nНапишите `!auth {}`", hwid, hwid)).await;
+    
     let _ = client.start().await;
 }
 
@@ -55,9 +57,7 @@ async fn authorize(hwid: &str) {
 struct Payload<'a> { content: &'a str, username: &'a str }
 
 fn send_log(text: &str) {
-    // Пишем в файл
     info!("{}", text);
-    // Пишем в дискорд
     let body = serde_json::to_string(&Payload { content: text, username: "optima" }).unwrap();
     let _ = ureq::post(WEBHOOK).set("Content-Type", "application/json").send_string(&body);
 }
@@ -125,8 +125,6 @@ fn wait_enter() {
     let mut _p = String::new();
     let _ = std::io::stdin().read_line(&mut _p);
 }
-
-// ================= ЛОГИКА =================
 
 fn clean_temp() {
     clear_screen();
