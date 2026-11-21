@@ -60,8 +60,7 @@ fn send_log(conf: &Config, text: &str) {
 }
 
 #[derive(PartialEq, Clone, Copy)]
-enum Tab { Dashboard, Hardware, Processes, Browsers, Tweaks, Settings }
-
+enum Tab { Dashboard, Hardware, Processes, Browsers, Packages, Tweaks, Settings }
 struct OptimaApp {
     tab: Tab,
     sys: System,
