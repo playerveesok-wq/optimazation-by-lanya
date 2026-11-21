@@ -1,13 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use eframe::egui::{self, Color32, RichText, ProgressBar, Frame, Rounding, FontId, FontFamily};
+use eframe::egui::{self, Color32, RichText, ProgressBar, Frame, Rounding};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
 use sysinfo::System;
 use chrono::Local;
 
@@ -75,7 +73,7 @@ impl OptimaApp {
         let gpu_name = get_gpu_name_registry();
         let total_ram = sys.total_memory() / 1024 / 1024;
 
-        let mut app = Self {
+        let app = Self {
             tab: Tab::Hardware,
             sys,
             config: Config::load(),
@@ -97,7 +95,6 @@ impl OptimaApp {
         visuals.widgets.hovered.bg_fill = accent.linear_multiply(0.3);
         visuals.widgets.active.bg_fill = accent;
         
-        // Кастомные темы (упрощенно через цвет фона)
         match self.config.theme {
             Theme::Dark => {},
             Theme::Sakura => { visuals.window_fill = Color32::from_rgb(40, 25, 30); visuals.panel_fill = Color32::from_rgb(35, 20, 25); },
@@ -309,16 +306,17 @@ impl OptimaApp {
         ui.label(RichText::new("Требуются права Администратора!").color(Color32::RED));
         ui.add_space(15.0);
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            let tweaks = [
-                ("Мышь: Отключить ускорение", "Убирает акселерацию для точного аима", || { tweak_mouse(); }),
-                ("Клавиатура: Отключить задержку", "Снижает задержку ввода", || { tweak_keyboard(); }),
-                ("Сеть: Отключить Nagle", "Снижает пинг в играх", || { tweak_network(); }),
-                ("Питание: Максимальная производительность", "Отключает энергосбережение", || { tweak_power(); }),
-                ("Система: Отключить телеметрию", "Блокирует сбор данных", || { tweak_telemetry(); }),
-                ("Игры: Отключить Game DVR", "Убирает фоновую запись", || { tweak_dvr(); }),
-            ];
+        // Исправленный массив с указателями на функции (fn) вместо замыканий
+        let tweaks: [(&str, &str, fn()); 6] = [
+            ("Мышь: Отключить ускорение", "Убирает акселерацию для точного аима", tweak_mouse),
+            ("Клавиатура: Отключить задержку", "Снижает задержку ввода", tweak_keyboard),
+            ("Сеть: Отключить Nagle", "Снижает пинг в играх", tweak_network),
+            ("Питание: Максимальная производительность", "Отключает энергосбережение", tweak_power),
+            ("Система: Отключить телеметрию", "Блокирует сбор данных", tweak_telemetry),
+            ("Игры: Отключить Game DVR", "Убирает фоновую запись", tweak_dvr),
+        ];
 
+        egui::ScrollArea::vertical().show(ui, |ui| {
             for (title, desc, action) in tweaks {
                 Frame::none().fill(Color32::from_rgb(30, 30, 35)).rounding(Rounding::same(8.0)).inner_margin(15.0).show(ui, |ui| {
                     ui.horizontal(|ui| {
@@ -445,7 +443,7 @@ fn tweak_network() {
 
 fn tweak_power() {
     #[cfg(windows)] {
-        let _ = Command::new("powercfg").args(["/setactive", "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"]).status(); // High Performance
+        let _ = Command::new("powercfg").args(["/setactive", "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"]).status();
     }
 }
 
