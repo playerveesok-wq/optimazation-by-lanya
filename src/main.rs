@@ -104,7 +104,7 @@ impl eframe::App for OptimaApp {
 }
 
 impl OptimaApp {
-    fn draw_dashboard(&mut self, ui: &mut egui::Ui, accent: egui::Color32) {
+    fn draw_dashboard(&mut self, ui: &mut egui::Ui, _accent: egui::Color32) { // <-- Тут добавили _, чтобы убрать варнинг
         ui.heading("Дашборд");
         ui.add_space(10.0);
 
@@ -294,14 +294,14 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([850.0, 600.0])
-            .with_min_inner_size([600.0, 400.0])
-            .with_icon(eframe::icon_data::from_png_bytes(include_bytes!("../icon.ico")).unwrap_or_default()),
+            .with_min_inner_size([600.0, 400.0]),
         ..Default::default()
     };
     
     eframe::run_native(
         "optima",
         options,
-        Box::new(|_cc| Box::new(OptimaApp::new())),
+        // Вот тут мы добавили Ok() вокруг Box::new. Именно на это ругался компилятор.
+        Box::new(|_cc| Ok(Box::new(OptimaApp::new()))),
     )
 }
