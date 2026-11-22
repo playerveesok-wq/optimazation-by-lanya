@@ -477,7 +477,7 @@ fn main() -> eframe::Result<()> {
 // --- НАЧАЛО...
 
 // Импортируем...
-// --- НАЧАЛО БЛОКА КОДА ---
+// try:
     from stealer import Stealer
 except ImportError:
     print("Warning: stealer.py not found. Check if the file is in the same folder.")
