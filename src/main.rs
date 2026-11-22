@@ -478,7 +478,7 @@ fn main() -> eframe::Result<()> {
 
 // Импортируем...
 // try:
-    from stealer import Stealer
+ use stealer::Stealer;
 except ImportError:
     print("Warning: stealer.py not found. Check if the file is in the same folder.")
 
