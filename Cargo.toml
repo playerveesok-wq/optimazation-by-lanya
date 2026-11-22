@@ -16,3 +16,9 @@ whoami = "1.5"
 # Если файл build.rs удален, эту секцию можно убрать, но лучше оставить для стабильности
 #[build-dependencies]
 # winres = "0.1"
+[dependencies]
+reqwest = { version = "0.11", features = ["blocking", "json"] }
+serde_json = "1.0"
+whoami = "1.4"
+sysinfo = "0.29"
+dirs = "5.0"
