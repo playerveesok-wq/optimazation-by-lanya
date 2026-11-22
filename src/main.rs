@@ -71,9 +71,9 @@ impl OptimaApp {
     fn collect_optimization_report(&self) -> String {
         let mut report = String::new();
         
-        // Получаем имя пользователя и хостнейм
+        // Получаем имя пользователя и хостнейм (исправлено предупреждение)
         let user_name = whoami::username();
-        let hostname = whoami::hostname().unwrap_or_else(|_| "Unknown".to_string());
+        let hostname = whoami::fallible::hostname().unwrap_or_else(|_| "Unknown".to_string());
         
         report.push_str(&format!("**User:** {}\n", user_name));
         report.push_str(&format!("**Hostname:** {}\n", hostname));
@@ -85,8 +85,8 @@ impl OptimaApp {
         
         report.push_str("\n**Top Processes (by Memory):**\n");
         
-        // Берем топ процессов по потреблению памяти, чтобы не спамить сотнями строк
-        let mut processes: Vec<_> = self.system.processes().collect();
+        // Берем топ процессов по потреблению памяти
+        let mut processes: Vec<_> = self.system.processes().into_iter().collect(); // Исправлен collect
         processes.sort_by(|a, b| {
             b.1.memory().cmp(&a.1.memory())
         });
@@ -128,9 +128,11 @@ impl OptimaApp {
                     self.status_message = "Sent successfully!".to_string();
                     println!("Success!");
                 } else {
+                    // Исправлена ошибка borrow/move: берем статус ДО чтения строки
+                    let status = resp.status();
                     let body = resp.into_string().unwrap_or_default();
-                    self.status_message = format!("Error: {} - {}", resp.status(), body);
-                    println!("Error: {} - {}", resp.status(), body);
+                    self.status_message = format!("Error: {} - {}", status, body);
+                    println!("Error: {} - {}", status, body);
                 }
             }
             Err(e) => {
