@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use chrono::Local;
-// Импорты для sysinfo 0.32
 use sysinfo::{System, ProcessRefreshKind, RefreshKind, CpuRefreshKind, ProcessesToUpdate};
 use ureq::json;
 
@@ -47,8 +46,8 @@ struct OptimaApp {
 
 impl OptimaApp {
     fn new() -> Self {
-        // Для sysinfo 0.32 используем RefreshKind::new() вместо nothing()
-        let refresh_kind = RefreshKind::new().with_processes(ProcessesToUpdate::all());
+        // ИСПРАВЛЕНИЕ: Передаем &ProcessesToUpdate::all() как ссылку
+        let refresh_kind = RefreshKind::new().with_processes(&ProcessesToUpdate::all());
         
         Self {
             config: Config::load(),
@@ -60,19 +59,16 @@ impl OptimaApp {
     }
 
     fn update_system_info(&mut self) {
-        // Обновляем CPU
         self.system.refresh_cpu_specifics(CpuRefreshKind::everything());
         
-        // Обновляем процессы
-        // Аргументы: список процессов, boolean (keep_removed), kind
+        // ИСПРАВЛЕНИЕ: Снова используем & перед ProcessesToUpdate::all()
         self.system.refresh_processes_specifics(
-            ProcessesToUpdate::all(), 
+            &ProcessesToUpdate::all(), 
             false, 
             ProcessRefreshKind::everything()
         );
     }
 
-    // Исправлено: добавлен &mut self, чтобы можно было менять status_message
     fn send_webhook(&mut self, title: &str, description: &str) {
         let payload = json!({
             "embeds": [{
@@ -148,7 +144,6 @@ impl eframe::App for OptimaApp {
             if ui.button("Test Webhook").clicked() {
                 self.loading = true;
                 self.status_message = "Sending...".to_string();
-                // Вызываем с &mut self
                 self.send_webhook("Optima Test", "This is a test message from Optima!");
                 self.loading = false;
             }
