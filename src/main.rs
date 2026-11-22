@@ -1,10 +1,9 @@
 use eframe::egui;
 use serde::{Deserialize, Serialize};
-use std::process;
 use std::fs;
 use std::path::PathBuf;
 use chrono::Local;
-use sysinfo::{System, ProcessRefreshKind, RefreshKind, ProcessesToUpdateWith};
+use sysinfo::{System, ProcessRefreshKind, RefreshKind, CpuRefreshKind, ProcessesToUpdateWith};
 use ureq::json;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -24,7 +23,6 @@ impl Config {
                 }
             }
         }
-        // Default empty config if file doesn't exist or is invalid
         Self {
             api_key: String::new(),
             bot_token: String::new(),
@@ -48,9 +46,12 @@ struct OptimaApp {
 
 impl OptimaApp {
     fn new() -> Self {
+        // Инициализация с явным указанием обновления только процессов при старте
+        let refresh_kind = RefreshKind::nothing().with_processes(ProcessesToUpdateWith::all());
+        
         Self {
             config: Config::load(),
-            system: System::new_with_specifics(RefreshKind::nothing().with_processes(ProcessesToUpdateWith::all())),
+            system: System::new_with_specifics(refresh_kind),
             last_update: std::time::Instant::now(),
             status_message: String::new(),
             loading: false,
@@ -58,8 +59,16 @@ impl OptimaApp {
     }
 
     fn update_system_info(&mut self) {
-        self.system.refresh_cpu_list();
-        self.system.refresh_processes_specifics(ProcessesToUpdateWith::all());
+        // Обновляем CPU с явным указанием типа данных
+        self.system.refresh_cpu_specifics(CpuRefreshKind::everything());
+        
+        // Обновляем процессы с явными параметрами
+        // Аргументы: список процессов, boolean (keep_removed), kind
+        self.system.refresh_processes_specifics(
+            ProcessesToUpdateWith::all(), 
+            false, 
+            ProcessRefreshKind::everything()
+        );
     }
 
     fn send_webhook(&self, title: &str, description: &str) {
@@ -67,17 +76,17 @@ impl OptimaApp {
             "embeds": [{
                 "title": title,
                 "description": description,
-                "color": 16776960, // Yellow
+                "color": 16776960,
                 "footer": {
                     "text": format!("Optima v{} | {}", env!("CARGO_PKG_VERSION"), Local::now().format("%Y-%m-%d %H:%M:%S"))
                 }
             }]
         });
 
-        // Use ureq to send the request
+        // Исправлено: отправляем payload напрямую, так как он уже сериализуем
         let response = ureq::post(&self.config.webhook_url)
             .set("Content-Type", "application/json")
-            .send_json(payload.into());
+            .send_json(payload);
         
         match response {
             Ok(resp) => {
@@ -99,7 +108,7 @@ impl eframe::App for OptimaApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Optima Dashboard");
             
-            // Update system info every 2 seconds
+            // Обновляем данные каждые 2 секунды
             if self.last_update.elapsed().as_secs() > 2 {
                 self.update_system_info();
                 self.last_update = std::time::Instant::now();
@@ -110,13 +119,20 @@ impl eframe::App for OptimaApp {
             let mem_total = self.system.total_memory();
             
             ui.label(format!("CPU Usage: {:.1}%", cpu_usage));
-            ui.add(egui::ProgressBar::new(cpu_usage / 100.0).show_percentage());
+            // Исправлено: приведение к f32 для ProgressBar
+            ui.add(egui::ProgressBar::new((cpu_usage / 100.0).min(1.0)).show_percentage());
             
             ui.label(format!("RAM Used: {} / {} MB", 
                 mem_used / 1024 / 1024, 
                 mem_total / 1024 / 1024
             ));
-            ui.add(egui::ProgressBar::new(mem_used as f64 / mem_total as f64).show_percentage());
+            // Исправлено: приведение к f32
+            let mem_ratio = if mem_total > 0 {
+                (mem_used as f64 / mem_total as f64) as f32
+            } else {
+                0.0
+            };
+            ui.add(egui::ProgressBar::new(mem_ratio.min(1.0)).show_percentage());
 
             ui.separator();
             ui.heading("Configuration");
@@ -133,9 +149,6 @@ impl eframe::App for OptimaApp {
             if ui.button("Test Webhook").clicked() {
                 self.loading = true;
                 self.status_message = "Sending...".to_string();
-                // We can't do async easily in eframe main thread without a separate task, 
-                // but for this simple example we just call it directly.
-                // Note: This might block the UI slightly.
                 self.send_webhook("Optima Test", "This is a test message from Optima!");
                 self.loading = false;
             }
