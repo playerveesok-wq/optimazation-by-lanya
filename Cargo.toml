@@ -13,5 +13,6 @@ sysinfo = "0.32"
 ureq = { version = "2.10", features = ["json"] }
 whoami = "1.5"
 
-[build-dependencies]
-winres = "0.1"
+# Если файл build.rs удален, эту секцию можно убрать, но лучше оставить для стабильности
+#[build-dependencies]
+# winres = "0.1"
