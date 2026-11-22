@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use chrono::Local;
-use sysinfo::{System, ProcessRefreshKind, RefreshKind, CpuRefreshKind, ProcessesToUpdate};
+use sysinfo::{System, ProcessRefreshKind, CpuRefreshKind};
 use ureq::json;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -46,8 +46,8 @@ struct OptimaApp {
 
 impl OptimaApp {
     fn new() -> Self {
-        // ИСПРАВЛЕНИЕ: Передаем &ProcessesToUpdate::all() как ссылку
-        let refresh_kind = RefreshKind::new().with_processes(&ProcessesToUpdate::all());
+        // Инициализируем только CPU для старта
+        let refresh_kind = sysinfo::RefreshKind::new().with_cpu(true);
         
         Self {
             config: Config::load(),
@@ -59,14 +59,11 @@ impl OptimaApp {
     }
 
     fn update_system_info(&mut self) {
+        // Обновляем CPU
         self.system.refresh_cpu_specifics(CpuRefreshKind::everything());
         
-        // ИСПРАВЛЕНИЕ: Снова используем & перед ProcessesToUpdate::all()
-        self.system.refresh_processes_specifics(
-            &ProcessesToUpdate::all(), 
-            false, 
-            ProcessRefreshKind::everything()
-        );
+        // Обновляем процессы без лишних параметров
+        self.system.refresh_processes(ProcessRefreshKind::everything());
     }
 
     fn send_webhook(&mut self, title: &str, description: &str) {
